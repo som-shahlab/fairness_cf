@@ -1,0 +1,11 @@
+*.npz
+.ipynb_checkpoints
+*/.ipynb_checkpoints/*
+/__pycache__/*
+*.pyc
+*.chk
+*.tar.gz
+*.log
+*.RData
+*.swp
+*.tex
