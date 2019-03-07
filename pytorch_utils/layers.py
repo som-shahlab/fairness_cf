@@ -69,7 +69,7 @@ class SparseLinear(nn.Module):
             self.in_features, self.out_features, self.bias is not None
         )
 
-class EmbedBagLinear(nn.Module):
+class EmbeddingBagLinear(nn.Module):
     __constants__ = ['bias']
     def __init__(self, in_features, out_features, bias=True):
         super().__init__()
@@ -106,6 +106,74 @@ class EmbedBagLinear(nn.Module):
             return self.embed(*self.compute_offsets(x)) + self.bias
         else:
             return self.embed(*self.compute_offsets(x))
+
+class HiddenLinearLayer(torch.nn.Module):
+    """
+    A linear neural network layer with batch_norm, RELU, and dropout.
+    """
+    def __init__(self, in_features, out_features, drop_prob = 0.0, batch_norm = False, activation = nn.LeakyReLU, sparse = False):
+        super().__init__()
+        
+        if sparse:
+            self.linear = EmbeddingBagLinear(in_features, out_features)
+        else:
+            self.linear = nn.Linear(in_features, out_features)
+
+        self.dropout = nn.Dropout(p = drop_prob)
+        self.activation = activation()
+        self.batch_norm = batch_norm
+        if self.batch_norm:
+            self.batch_norm_layer = nn.BatchNorm1d(num_features = out_features)
+        
+    def forward(self, x):
+        if self.batch_norm:
+            result = self.dropout(self.activation(self.batch_norm_layer(self.linear(x))))
+        else:
+            result = self.dropout(self.activation(self.linear(x)))
+        return result
+
+class FixedWidthClassifier(torch.nn.Module):
+    """
+    Feedforward network with a fixed number of hidden layers. Handles sparse input
+    """
+    def __init__(self, in_features, hidden_dim, num_hidden, output_dim = 2, 
+        drop_prob = 0.0, batch_norm = False, activation = nn.LeakyReLU, sparse_input = False):
+        super().__init__()
+
+        ## If no hidden layers - go right from input to output
+        if num_hidden == 0:
+            if sparse_input:
+                self.output_layer = EmbeddingBagLinear(in_features, output_dim)
+            else:
+                self.output_layer = nn.Linear(in_features, output_dim)
+            self.layers = nn.ModuleList([self.output_layer])
+
+        ## If 1 or more hidden layer, create input and output layer separately
+        elif num_hidden >= 1:
+            self.input_layer = HiddenLinearLayer(in_features = in_features,
+                                                out_features = hidden_dim,
+                                                drop_prob = drop_prob,
+                                                batch_norm = batch_norm,
+                                                activation = activation,
+                                                sparse = sparse_input
+                                                )
+            self.layers = nn.ModuleList([self.input_layer])
+            self.output_layer = nn.Linear(hidden_dim, output_dim)
+
+        ## If more than one hidden layer, create intermediate hidden layers
+        elif self.num_hidden > 1:
+            self.layers.extend([HiddenLinearLayer(in_features = hidden_dim, 
+                                                    hidden_dim = hidden_dim, 
+                                                    drop_prob = drop_prob,
+                                                    batch_norm = batch_norm,
+                                                    activation = activation,
+                                                    sparse = False)
+            for i in range(self.num_hidden - 1)])
+        self.layers.extend([self.output_layer])
+
+    def forward(self, x):
+        y_pred = nn.Sequential(*self.layers).forward(x)
+        return y_pred
 
 class CFVAE(torch.nn.Module):
     """

@@ -288,7 +288,7 @@ class TorchModel:
         """
         torch.save(self.model.state_dict(), the_path)
 
-class SparseModel(TorchModel):
+class SparseLogisticRegression(TorchModel):
     
     def init_datasets(self, data_dict, label_dict):
         """
@@ -305,7 +305,7 @@ class SparseModel(TorchModel):
         model = SequentialLayers([layer])
         return model
 
-class SparseModelEmbed(TorchModel):
+class SparseLogisticRegressionEmbed(TorchModel):
     
     def init_datasets(self, data_dict, label_dict):
         """
@@ -321,9 +321,35 @@ class SparseModelEmbed(TorchModel):
         return dataset_dict
     
     def init_model(self):
-        layer = EmbedBagLinear(self.config_dict['input_dim'], self.config_dict['output_dim'])
+        layer = EmbeddingBagLinear(self.config_dict['input_dim'], self.config_dict['output_dim'])
         model = SequentialLayers([layer])
         return model
+
+class SparseModel(TorchModel):
+    def init_datasets(self, data_dict, label_dict):
+        """
+        Creates data loaders from inputs
+        """
+        splits = data_dict.keys()
+        dataset_dict = {key: ArrayDataset(data_dict[key], 
+                                          torch.LongTensor(label_dict[key]),
+                                          convert_sparse = False
+                                         )
+                                for key in splits
+                        }
+        return dataset_dict
+
+    def init_model(self):
+        model = FixedWidthClassifier(in_features = self.config_dict['input_dim'],
+            hidden_dim = self.config_dict['hidden_dim'],
+            num_hidden = self.config_dict['num_hidden'],
+            output_dim = self.config_dict['output_dim'],
+            drop_prob = self.config_dict['drop_prob'],
+            batch_norm = self.config_dict['batch_norm'],
+            sparse_input = True
+            )
+        return model
+
 
 class model_CLP(TorchModel):
     
