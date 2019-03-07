@@ -8,6 +8,16 @@ import torch.nn.functional as F
 
 from torch.utils.data import TensorDataset, DataLoader
 
+
+class SequentialLayers(nn.Module):
+
+    def __init__(self, layers):
+        super().__init__()
+        self.layers = nn.ModuleList(layers)
+
+    def forward(self, x):
+        return nn.Sequential(*self.layers).forward(x)
+
 class LinearLayer(nn.Module):
     """
     Linear Regression model
@@ -41,7 +51,7 @@ class SparseLinear(nn.Module):
         return self.sparse_linear(input, self.weight, self.bias)
 
     def reset_parameters(self):
-        nn.init.kaiming_uniform_(self.weight, a=math.sqrt(5))
+        nn.init.xavier_normal_(self.weight)
         if self.bias is not None:
             fan_in, _ = nn.init._calculate_fan_in_and_fan_out(self.weight)
             bound = 1 / math.sqrt(fan_in)
@@ -65,7 +75,7 @@ class EmbedBagLinear(nn.Module):
         super().__init__()
         self.in_features = in_features
         self.out_features = out_features
-        self.weight = nn.EmbeddingBag(num_embeddings = in_features, 
+        self.embed = nn.EmbeddingBag(num_embeddings = in_features, 
                                        embedding_dim = out_features, 
                                        mode = 'sum'
                                      )
@@ -76,10 +86,9 @@ class EmbedBagLinear(nn.Module):
         self.reset_parameters()
 
     def reset_parameters(self):
-        nn.init.kaiming_uniform_(self.weight.weight, a=math.sqrt(5))
-
+        nn.init.xavier_normal_(self.embed.weight)
         if self.bias is not None:
-            fan_in, _ = nn.init._calculate_fan_in_and_fan_out(self.weight.weight)
+            fan_in, _ = nn.init._calculate_fan_in_and_fan_out(self.embed.weight)
             bound = 1 / math.sqrt(fan_in)
             nn.init.uniform_(self.bias, -bound, bound)
 
@@ -89,11 +98,14 @@ class EmbedBagLinear(nn.Module):
         )
 
     def compute_offsets(self, batch):
-        return torch.LongTensor(batch.indices).to(self.weight.weight.device), \
-                torch.LongTensor(batch.indptr[:-1]).to(self.weight.weight.device)
+        return torch.LongTensor(batch.indices).to(self.embed.weight.device), \
+                torch.LongTensor(batch.indptr[:-1]).to(self.embed.weight.device)
 
     def forward(self, x):
-        return self.weight(*self.compute_offsets(x)) + self.bias
+        if self.bias is not None:
+            return self.embed(*self.compute_offsets(x)) + self.bias
+        else:
+            return self.embed(*self.compute_offsets(x))
 
 class CFVAE(torch.nn.Module):
     """

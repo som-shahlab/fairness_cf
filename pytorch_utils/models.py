@@ -160,8 +160,11 @@ class TorchModel:
         """
         Initialize the weights with Glorot initilization
         """
-        if isinstance(m, nn.Linear) or isinstance(m, nn.EmbeddingBag) or isinstance(m, nn.Embedding):
-            nn.init.xavier_normal_(m.weight.data)
+        if isinstance(m, nn.Linear) or \
+            isinstance(m, nn.EmbeddingBag) or \
+            isinstance(m, nn.Embedding) or \
+            isinstance(m, SparseLinear):
+            nn.init.xavier_normal_(m.weight)
     
     def init_model(self):
         """
@@ -298,7 +301,9 @@ class SparseModel(TorchModel):
         return dataset_dict
     
     def init_model(self):
-        return SparseLinear(self.config_dict['input_dim'], self.config_dict['output_dim'])
+        layer = SparseLinear(self.config_dict['input_dim'], self.config_dict['output_dim'])
+        model = SequentialLayers([layer])
+        return model
 
 class SparseModelEmbed(TorchModel):
     
@@ -316,7 +321,9 @@ class SparseModelEmbed(TorchModel):
         return dataset_dict
     
     def init_model(self):
-        return EmbedBagLinear(self.config_dict['input_dim'], self.config_dict['output_dim'])
+        layer = EmbedBagLinear(self.config_dict['input_dim'], self.config_dict['output_dim'])
+        model = SequentialLayers([layer])
+        return model
 
 class model_CLP(TorchModel):
     
