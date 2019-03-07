@@ -59,6 +59,42 @@ class SparseLinear(nn.Module):
             self.in_features, self.out_features, self.bias is not None
         )
 
+class EmbedBagLinear(nn.Module):
+    __constants__ = ['bias']
+    def __init__(self, in_features, out_features, bias=True):
+        super().__init__()
+        self.in_features = in_features
+        self.out_features = out_features
+        self.weight = nn.EmbeddingBag(num_embeddings = in_features, 
+                                       embedding_dim = out_features, 
+                                       mode = 'sum'
+                                     )
+        if bias:
+            self.bias = nn.Parameter(torch.Tensor(out_features))
+        else:
+            self.register_parameter('bias', None)
+        self.reset_parameters()
+
+    def reset_parameters(self):
+        nn.init.kaiming_uniform_(self.weight.weight, a=math.sqrt(5))
+
+        if self.bias is not None:
+            fan_in, _ = nn.init._calculate_fan_in_and_fan_out(self.weight.weight)
+            bound = 1 / math.sqrt(fan_in)
+            nn.init.uniform_(self.bias, -bound, bound)
+
+    def extra_repr(self):
+        return 'in_features={}, out_features={}, bias={}'.format(
+            self.in_features, self.out_features, self.bias is not None
+        )
+
+    def compute_offsets(self, batch):
+        return torch.LongTensor(batch.indices).to(self.weight.weight.device), \
+                torch.LongTensor(batch.indptr[:-1]).to(self.weight.weight.device)
+
+    def forward(self, x):
+        return self.weight(*self.compute_offsets(x)) + self.bias
+
 class CFVAE(torch.nn.Module):
     """
     Module that defines a wrapper around the components of a counterfactual VAE

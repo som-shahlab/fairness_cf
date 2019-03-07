@@ -35,6 +35,8 @@ class TorchModel:
         Creates data loaders from inputs
         """
         dataset_dict = self.init_datasets(data_dict, label_dict)
+
+        # Determine which collate_fn is appropriate
         if hasattr(dataset_dict['train'], 'collate_fn') and callable(getattr(dataset_dict['train'], 'collate_fn')):
             collate_fn = dataset_dict['train'].collate_fn
         else:
@@ -78,15 +80,6 @@ class TorchModel:
         Creates data loaders from inputs - for use at prediction time
         """
         return self.init_loaders(data_dict, label_dict)
-        # dataset_dict = {key: TensorDataset(torch.FloatTensor(data_dict[key]), 
-        #                                    torch.LongTensor(label_dict[key])) 
-        #                     for key in data_dict.keys()
-        #                }
-        # loaders_dict = {key: DataLoader(dataset_dict[key], 
-        #                                 batch_size = self.config_dict['batch_size']) 
-        #                     for key in data_dict.keys()
-        #                }
-        # return loaders_dict
     
     def init_metric_dict(self, metrics = [''], phases = ['train', 'val']):
         """
@@ -161,7 +154,7 @@ class TorchModel:
         """
         Sends a batch to the device
         """
-        return (arg.to(self.device) for arg in the_batch)
+        return (arg.to(self.device) if isinstance(arg, torch.Tensor) else arg for arg in the_batch)
     
     @staticmethod
     def weights_init(m):
@@ -307,14 +300,6 @@ class SparseModel(TorchModel):
     
     def init_model(self):
         return SparseLinear(self.config_dict['input_dim'], self.config_dict['output_dim'])
-    
-    def init_optimizer(self):
-        """
-        Initialize an optimizer
-        """
-        params = [{'params' : self.model.parameters()}]
-        optimizer = torch.optim.Adam(params, lr = self.config_dict['lr'])
-        return optimizer
 
 class model_CLP(TorchModel):
     
@@ -397,6 +382,24 @@ class model_CLP(TorchModel):
         self.model.load_state_dict(best_model_wts)
         result_dict = {phase: {**performance_dict[phase], **loss_dict[phase]} for phase in performance_dict.keys()}
         return result_dict
+
+class SparseModelEmbed(TorchModel):
+    
+    def init_datasets(self, data_dict, label_dict):
+        """
+        Creates data loaders from inputs
+        """
+        splits = data_dict.keys()
+        dataset_dict = {key: ArrayDataset(data_dict[key], 
+                                          torch.LongTensor(label_dict[key]),
+                                          convert_sparse = False
+                                         )
+                                for key in splits
+                        }
+        return dataset_dict
+    
+    def init_model(self):
+        return EmbedBagLinear(self.config_dict['input_dim'], self.config_dict['output_dim'])
 
 class model_CLP_conditional(TorchModel):
     
