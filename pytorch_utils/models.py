@@ -45,7 +45,6 @@ class TorchModel:
         # Switch to handle random iteration versus looping the whole dataset
         if self.config_dict.get('iters_per_epoch') is not None:
             num_samples = self.config_dict['iters_per_epoch']*self.config_dict['batch_size']
-            print(num_samples)
             loaders_dict = {}
             for key in dataset_dict.keys():
                 if key == 'train':
@@ -54,7 +53,6 @@ class TorchModel:
                                                             RandomSampler(dataset_dict[key],
                                                                 replacement = True,
                                                                 num_samples = num_samples
-                                                                # num_samples = 1000
                                                                 ),
                                                             batch_size = self.config_dict['batch_size'],
                                                             drop_last = False, 
@@ -345,7 +343,7 @@ class SparseModel(TorchModel):
             num_hidden = self.config_dict['num_hidden'],
             output_dim = self.config_dict['output_dim'],
             drop_prob = self.config_dict['drop_prob'],
-            batch_norm = self.config_dict['batch_norm'],
+            normalize = self.config_dict['normalize'],
             sparse_input = True
             )
         return model
