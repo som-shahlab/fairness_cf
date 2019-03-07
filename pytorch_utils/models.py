@@ -28,7 +28,7 @@ class TorchModel:
         return {key: TensorDataset(torch.FloatTensor(data_dict[key]), 
                                            torch.LongTensor(label_dict[key])) 
                             for key in data_dict.keys()
-                       }
+                }
 
     def init_loaders(self, data_dict, label_dict):
         """
@@ -65,7 +65,6 @@ class TorchModel:
                     loaders_dict[key] = DataLoader(dataset_dict[key], 
                                                     batch_size = self.config_dict['batch_size'],
                                                     collate_fn = collate_fn)
-
         else:
             loaders_dict = {key: DataLoader(dataset_dict[key], 
                                         batch_size = self.config_dict['batch_size'],
@@ -301,6 +300,24 @@ class SparseModel(TorchModel):
     def init_model(self):
         return SparseLinear(self.config_dict['input_dim'], self.config_dict['output_dim'])
 
+class SparseModelEmbed(TorchModel):
+    
+    def init_datasets(self, data_dict, label_dict):
+        """
+        Creates data loaders from inputs
+        """
+        splits = data_dict.keys()
+        dataset_dict = {key: ArrayDataset(data_dict[key], 
+                                          torch.LongTensor(label_dict[key]),
+                                          convert_sparse = False
+                                         )
+                                for key in splits
+                        }
+        return dataset_dict
+    
+    def init_model(self):
+        return EmbedBagLinear(self.config_dict['input_dim'], self.config_dict['output_dim'])
+
 class model_CLP(TorchModel):
     
     def init_loaders(self, data_dict, data_dict_cf, label_dict):
@@ -382,24 +399,6 @@ class model_CLP(TorchModel):
         self.model.load_state_dict(best_model_wts)
         result_dict = {phase: {**performance_dict[phase], **loss_dict[phase]} for phase in performance_dict.keys()}
         return result_dict
-
-class SparseModelEmbed(TorchModel):
-    
-    def init_datasets(self, data_dict, label_dict):
-        """
-        Creates data loaders from inputs
-        """
-        splits = data_dict.keys()
-        dataset_dict = {key: ArrayDataset(data_dict[key], 
-                                          torch.LongTensor(label_dict[key]),
-                                          convert_sparse = False
-                                         )
-                                for key in splits
-                        }
-        return dataset_dict
-    
-    def init_model(self):
-        return EmbedBagLinear(self.config_dict['input_dim'], self.config_dict['output_dim'])
 
 class model_CLP_conditional(TorchModel):
     
