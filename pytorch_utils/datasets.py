@@ -44,7 +44,6 @@ class ArrayDataset(Dataset):
                 for element in zipped
                 )
 
-
         return result
 
     def csr_to_tensor(self, x):
