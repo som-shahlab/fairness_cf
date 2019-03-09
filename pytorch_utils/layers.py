@@ -4,8 +4,6 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-
-
 from torch.utils.data import TensorDataset, DataLoader
 
 
@@ -24,9 +22,9 @@ class LinearLayer(nn.Module):
     """
     Linear Regression model
     """
-    def __init__(self, input_dim, out_dim):
+    def __init__(self, in_features, out_features):
         super().__init__()
-        self.linear = nn.Linear(input_dim, out_dim)
+        self.linear = nn.Linear(in_features, out_features)
         
     def forward(self, x):
         return self.linear(x)
@@ -117,16 +115,12 @@ class HiddenLinearLayer(torch.nn.Module):
     """
     A neural network layer
     """
-    def __init__(self, in_features, out_features, drop_prob = 0.0, normalize = False, activation = nn.LeakyReLU, sparse = False):
+    def __init__(self, in_features, out_features, drop_prob = 0.0, normalize = False, activation = F.leaky_relu, sparse = False, sparse_mode = 'binary'):
         super().__init__()
-        
-        if sparse:
-            self.linear = EmbeddingBagLinear(in_features, out_features)
-        else:
-            self.linear = nn.Linear(in_features, out_features)
 
+        self.linear = LinearLayerWrapper(in_features, out_features, sparse = sparse, sparse_mode = sparse_mode)
         self.dropout = nn.Dropout(p = drop_prob)
-        self.activation = activation()
+        self.activation = activation
         self.normalize = normalize
         if self.normalize:
             self.normalize_layer = nn.LayerNorm(normalized_shape = out_features)
@@ -138,20 +132,54 @@ class HiddenLinearLayer(torch.nn.Module):
             result = self.dropout(self.activation(self.linear(x)))
         return result
 
+class LinearLayerWrapper(torch.nn.Module):
+    """
+    Wrapper around various linear layers to call appropriate sparse layer
+    """
+    def __init__(self, in_features, out_features, sparse = False, sparse_mode = 'binary'):
+        super().__init__()
+        if sparse and (sparse_mode == 'binary'):
+            self.linear = EmbeddingBagLinear(in_features, out_features)
+        elif sparse and (sparse_mode == 'count'):
+            self.linear = SparseLinear(in_features, out_features)
+        else:
+            self.linear = nn.Linear(in_features, out_features)
+
+    def forward(self, x):
+        return self.linear.forward(x)
+
+class ResidualBlock(torch.nn.Module):
+    """
+    A residual block for fully connected networks
+    """
+    def __init__(self, hidden_dim, drop_prob = 0.0, normalize = False, activation = F.leaky_relu):
+        super().__init__()
+
+        self.layer1 = HiddenLinearLayer(in_features = hidden_dim, out_features = hidden_dim, 
+            drop_prob = drop_prob, normalize = normalize, activation = activation)
+        self.layer2 = HiddenLinearLayer(in_features = hidden_dim, out_features = hidden_dim, 
+            drop_prob = drop_prob, normalize = normalize, activation = self.identity)
+
+        self.activation = activation
+
+    def forward(self, x):
+        result = self.activation(self.layer2(self.layer1(x)) + x)
+        return result
+
+    def identity(self, x):
+        return x
+
 class FixedWidthClassifier(torch.nn.Module):
     """
     Feedforward network with a fixed number of hidden layers. Handles sparse input
     """
     def __init__(self, in_features, hidden_dim, num_hidden, output_dim = 2, 
-        drop_prob = 0.0, normalize = False, activation = nn.LeakyReLU, sparse_input = False):
+        drop_prob = 0.0, normalize = False, activation = F.leaky_relu, sparse = False, sparse_mode = 'binary', resnet = False):
         super().__init__()
 
         ## If no hidden layers - go right from input to output
         if num_hidden == 0:
-            if sparse_input:
-                self.output_layer = EmbeddingBagLinear(in_features, output_dim)
-            else:
-                self.output_layer = nn.Linear(in_features, output_dim)
+            self.output_layer = LinearLayerWrapper(in_features, output_dim, sparse = sparse, sparse_mode = sparse_mode)
             self.layers = nn.ModuleList([self.output_layer])
 
         ## If 1 or more hidden layer, create input and output layer separately
@@ -161,21 +189,29 @@ class FixedWidthClassifier(torch.nn.Module):
                                                 drop_prob = drop_prob,
                                                 normalize = normalize,
                                                 activation = activation,
-                                                sparse = sparse_input
+                                                sparse = sparse,
+                                                sparse_mode = sparse_mode
                                                 )
             self.layers = nn.ModuleList([self.input_layer])
             self.output_layer = nn.Linear(hidden_dim, output_dim)
 
-        ## If more than one hidden layer, create intermediate hidden layers
-        elif self.num_hidden > 1:
-            self.layers.extend([HiddenLinearLayer(in_features = hidden_dim, 
-                                                    hidden_dim = hidden_dim, 
-                                                    drop_prob = drop_prob,
-                                                    normalize = normalize,
-                                                    activation = activation,
-                                                    sparse = False)
-            for i in range(self.num_hidden - 1)])
-        self.layers.extend([self.output_layer])
+            ## If more than one hidden layer, create intermediate hidden layers
+            if num_hidden > 1:
+                if resnet:
+                    self.layers.extend([ResidualBlock(hidden_dim = hidden_dim, 
+                                                      drop_prob = drop_prob,
+                                                      normalize = normalize,
+                                                      activation = activation
+                                                      ) for i in range(num_hidden - 1)])
+                else:
+                    self.layers.extend([HiddenLinearLayer(in_features = hidden_dim, 
+                                                            out_features = hidden_dim, 
+                                                            drop_prob = drop_prob,
+                                                            normalize = normalize,
+                                                            activation = activation,
+                                                            sparse = False
+                                                            ) for i in range(num_hidden - 1)])
+            self.layers.extend([self.output_layer])
 
     def forward(self, x):
         y_pred = nn.Sequential(*self.layers).forward(x)

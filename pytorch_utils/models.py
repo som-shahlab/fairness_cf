@@ -1,3 +1,4 @@
+import pandas as pd
 import sys
 import copy
 import torch
@@ -22,6 +23,7 @@ class TorchModel:
         self.model.apply(self.weights_init)
         self.model.to(self.device)
         self.optimizer = self.init_optimizer()
+        self.scheduler = self.init_scheduler()
         self.criterion = self.init_loss()
 
     def init_datasets(self, data_dict, label_dict):
@@ -177,6 +179,13 @@ class TorchModel:
         params = [{'params' : self.model.parameters()}]
         optimizer = torch.optim.Adam(params, lr = self.config_dict['lr'])
         return optimizer
+
+    def init_scheduler(self):
+        gamma = self.config_dict.get('gamma')
+        if gamma is None:
+            return None
+        else:
+            return torch.optim.lr_scheduler.ExponentialLR(self.optimizer, gamma = gamma)
     
     def init_loss(self, reduction = 'mean'):
         """
@@ -193,6 +202,10 @@ class TorchModel:
         for epoch in range(self.config_dict['num_epochs']):
             print('Epoch {}/{}'.format(epoch, self.config_dict['num_epochs'] - 1))
             print('-' * 10)
+
+            if self.scheduler is not None:
+                    self.scheduler.step()
+
             for phase in ['train', 'val']:
                 self.model.train(phase == 'train')
                 running_loss_dict = self.init_running_loss_dict(list(loss_dict[phase].keys()))
@@ -245,7 +258,7 @@ class TorchModel:
         result_dict = {phase: {**performance_dict[phase], **loss_dict[phase]} for phase in performance_dict.keys()}
         return result_dict
                 
-    def predict(self, data_dict, label_dict, phases = ['test'], **kwargs):
+    def predict(self, data_dict, label_dict, phases = ['test']):
         loaders = self.init_loaders_predict(data_dict, label_dict)
         loss_dict = self.init_loss_dict(phases = phases)
         performance_dict = self.init_performance_dict(phases = phases)
@@ -286,6 +299,21 @@ class TorchModel:
         """
         torch.save(self.model.state_dict(), the_path)
 
+    @staticmethod
+    def process_result_dict(the_dict, names = ['metric', 'phase', 'epoch', 'performance']):
+        """
+        Processes the result_dict returned from train and predict to a dataframe
+        """
+        result = pd.DataFrame(the_dict). \
+                    reset_index(). \
+                    melt(id_vars = 'index'). \
+                    set_index(['index', 'variable']).value. \
+                    apply(pd.Series). \
+                    stack(). \
+                    reset_index()
+        result.columns = names
+        return result
+
 class SparseLogisticRegression(TorchModel):
     
     def init_datasets(self, data_dict, label_dict):
@@ -323,7 +351,10 @@ class SparseLogisticRegressionEmbed(TorchModel):
         model = SequentialLayers([layer])
         return model
 
-class SparseModel(TorchModel):
+class FeedforwardNetModel(TorchModel):
+    """
+    The primary class for a feedforward net model
+    """
     def init_datasets(self, data_dict, label_dict):
         """
         Creates data loaders from inputs
@@ -344,10 +375,11 @@ class SparseModel(TorchModel):
             output_dim = self.config_dict['output_dim'],
             drop_prob = self.config_dict['drop_prob'],
             normalize = self.config_dict['normalize'],
-            sparse_input = True
+            sparse = self.config_dict['sparse'],
+            sparse_mode = self.config_dict['sparse_mode'],
+            resnet = self.config_dict['resnet']
             )
         return model
-
 
 class model_CLP(TorchModel):
     
