@@ -9,190 +9,8 @@ from sklearn.metrics import roc_auc_score, average_precision_score, brier_score_
 
 from .layers import *
 from .datasets import *
-
-class model_CLP(TorchModel):
-    
-    def init_loaders(self, data_dict, data_dict_cf, label_dict):
-        """
-        Creates data loaders from inputs
-        """
-        dataset_dict = {key: TensorDataset(torch.FloatTensor(data_dict[key]), 
-                                           torch.FloatTensor(data_dict_cf[key]),
-                                           torch.LongTensor(label_dict[key])) 
-                            for key in data_dict.keys()
-                       }
-        loaders_dict = {key: DataLoader(dataset_dict[key], 
-                                        batch_size = self.config_dict['batch_size']) 
-                            for key in data_dict.keys()
-                       }
-        return loaders_dict
-    
-    def init_loss_dict(self, metrics = ['loss', 'classification', 'clp'], phases = ['train', 'val']):
-        return super().init_loss_dict(metrics = metrics, phases = phases)
-    
-    def train(self, data_dict, data_dict_cf, label_dict):
-        loaders = self.init_loaders(data_dict, data_dict_cf, label_dict)
-        best_performance = 1e18
-        loss_dict = self.init_loss_dict()
-        performance_dict = self.init_performance_dict()
-        
-        for epoch in range(self.config_dict['num_epochs']):
-            print('Epoch {}/{}'.format(epoch, self.config_dict['num_epochs'] - 1))
-            print('-' * 10)
-            for phase in ['train', 'val']:
-                self.model.train(phase == 'train')
-                running_loss_dict = self.init_running_loss_dict(list(loss_dict[phase].keys()))
-                output_dict = self.init_output_dict()
-                i = 0
-                for the_data in loaders[phase]:
-                    i += 1
-                    batch_loss_dict = {}
-                    inputs, inputs_cf, labels = self.transform_batch(the_data)
-                    self.optimizer.zero_grad()
-                    
-                    outputs = self.model(inputs)
-                    
-                    output_dict = self.update_output_dict(output_dict, outputs, labels)
-                    
-                    outputs_cf = self.model(inputs_cf)
-                    
-                    batch_loss_dict['classification'] = self.criterion(outputs, labels)
-                    batch_loss_dict['clp'] = ((outputs - outputs_cf) ** 2).mean()
-                    
-                    batch_loss_dict['loss'] = batch_loss_dict['classification'] + \
-                                                self.config_dict['lambda_cf'] * batch_loss_dict['clp']
-                    if phase == 'train':
-                        batch_loss_dict['loss'].backward()
-                        self.optimizer.step()
-                        
-                    for key in batch_loss_dict.keys():
-                        running_loss_dict[key] += batch_loss_dict[key].item()
-
-                # Compute epoch losses and update loss dict
-                epoch_loss_dict = {key: running_loss_dict[key] / i for key in running_loss_dict.keys()}
-                loss_dict[phase] = self.update_metric_dict(loss_dict[phase], epoch_loss_dict)
-                
-                # Compute epoch performance and update performance dict
-                epoch_statistics = self.compute_epoch_statistics(output_dict)
-                performance_dict[phase] = self.update_metric_dict(performance_dict[phase], epoch_statistics)
-                
-                print('Phase: {}:'.format(phase))
-                self.print_metric_dict(epoch_loss_dict)
-                self.print_metric_dict(epoch_statistics)
-                
-                if phase == 'val':
-                    best_model_condition = epoch_loss_dict['loss'] < best_performance
-                    if best_model_condition:
-                        print('Best model updated')
-                        best_performance = epoch_loss_dict['loss']
-                        best_model_wts = copy.deepcopy(self.model.state_dict())
-
-        print('Best val performance: {:4f}'.format(best_performance))
-        self.model.load_state_dict(best_model_wts)
-        result_dict = {phase: {**performance_dict[phase], **loss_dict[phase]} for phase in performance_dict.keys()}
-        return result_dict
-
-class model_CLP_conditional(TorchModel):
-    
-    def init_loaders(self, data_dict, data_dict_cf, label_dict, label_dict_cf):
-        """
-        Creates data loaders from inputs
-        """
-        dataset_dict = {key: TensorDataset(torch.FloatTensor(data_dict[key]), 
-                                           torch.FloatTensor(data_dict_cf[key]),
-                                           torch.LongTensor(label_dict[key]),
-                                           torch.LongTensor(label_dict_cf[key])
-                                          ) 
-                            for key in data_dict.keys()
-                       }
-        loaders_dict = {key: DataLoader(dataset_dict[key], 
-                                        batch_size = self.config_dict['batch_size']) 
-                            for key in data_dict.keys()
-                       }
-        return loaders_dict
-    
-    def init_loss_dict(self, metrics = ['loss', 'classification', 'clp', 'classification_cf'], 
-                       phases = ['train', 'val']):
-        return super().init_loss_dict(metrics = metrics, phases = phases)
-    
-    def train(self, data_dict, data_dict_cf, label_dict, label_dict_cf):
-        loaders = self.init_loaders(data_dict = data_dict, data_dict_cf = data_dict_cf, 
-                                    label_dict = label_dict, label_dict_cf = label_dict_cf)
-        best_performance = 1e18
-        loss_dict = self.init_loss_dict()
-        performance_dict = self.init_performance_dict()
-        performance_dict_cf = self.init_performance_dict()
-        
-        for epoch in range(self.config_dict['num_epochs']):
-            print('Epoch {}/{}'.format(epoch, self.config_dict['num_epochs'] - 1))
-            print('-' * 10)
-            for phase in ['train', 'val']:
-                self.model.train(phase == 'train')
-                running_loss_dict = self.init_running_loss_dict(list(loss_dict[phase].keys()))
-                output_dict = self.init_output_dict()
-                output_dict_cf = self.init_output_dict()
-                i = 0
-                for the_data in loaders[phase]:
-                    i += 1
-                    batch_loss_dict = {}
-                    inputs, inputs_cf, labels, labels_cf = self.transform_batch(the_data)
-                    
-                    self.optimizer.zero_grad()
-                    outputs = self.model(inputs)
-                    output_dict = self.update_output_dict(output_dict, outputs, labels)
-                    
-                    outputs_cf = self.model(inputs_cf)
-                    output_dict_cf = self.update_output_dict(output_dict_cf, outputs_cf, labels_cf)
-                    
-                    ## Classification losses
-                    batch_loss_dict['classification'] = self.criterion(outputs, labels)
-                    batch_loss_dict['classification_cf'] = self.criterion(outputs_cf, labels_cf)
-                    
-                    ## Conditional CLP
-                    mask = labels == labels_cf
-                    
-                    batch_loss_dict['clp'] = ((outputs[mask] - outputs_cf[mask]) ** 2).mean()
-                    
-                    batch_loss_dict['loss'] = (batch_loss_dict['classification'] + 
-                                self.config_dict['lambda_cls_cf'] * batch_loss_dict['classification_cf'] + 
-                                self.config_dict['lambda_clp'] * batch_loss_dict['clp']
-                           )
-                    if phase == 'train':
-                        batch_loss_dict['loss'].backward()
-                        self.optimizer.step()
-                    
-                    for key in batch_loss_dict.keys():
-                        running_loss_dict[key] += batch_loss_dict[key].item()
-                    
-                
-                # Compute epoch losses and update loss dict
-                epoch_loss_dict = {key: running_loss_dict[key] / i for key in running_loss_dict.keys()}
-                loss_dict[phase] = self.update_metric_dict(loss_dict[phase], epoch_loss_dict)
-                
-                # Compute epoch performance and update performance dict
-                epoch_statistics = self.compute_epoch_statistics(output_dict)
-                performance_dict[phase] = self.update_metric_dict(performance_dict[phase], epoch_statistics)
-                
-                epoch_statistics_cf = self.compute_epoch_statistics(output_dict_cf)
-                performance_dict_cf[phase] = self.update_metric_dict(performance_dict_cf[phase], epoch_statistics_cf)
-                
-                print('Phase: {}:'.format(phase))
-                self.print_metric_dict(epoch_loss_dict)
-                print('Factual')
-                self.print_metric_dict(epoch_statistics)
-                print('Counterfactual')
-                self.print_metric_dict(epoch_statistics_cf)
-            
-                if phase == 'val':
-                    best_model_condition = epoch_loss_dict['loss'] < best_performance
-                    if best_model_condition:
-                        print('Best model updated')
-                        best_performance = epoch_loss_dict['loss']
-                        best_model_wts = copy.deepcopy(self.model.state_dict())
-
-        print('Best val performance: {:4f}'.format(best_performance))    
-        self.model.load_state_dict(best_model_wts)
-        return loss_dict, performance_dict, performance_dict_cf
+from .models import *
+from .cfvae_layers import *
 
 class CFVAEModel(TorchModel):
     """
@@ -214,33 +32,57 @@ class CFVAEModel(TorchModel):
         
     def init_encoder(self, config_dict):
         """
-        Encoder that converts data to latent representation - default to linear VAE encoder
+        Encoder that converts data to latent representation. Should return an instance of class VAEEncoder
         """
-        return ConditionalLinearVAEEncoder(input_dim = config_dict['input_dim'] + config_dict['condition_embed_dim'], 
-                                           latent_dim = config_dict['latent_dim'] + config_dict['condition_embed_dim'],
-                                           num_conditions = config_dict['num_groups'],
-                                           condition_embed_dim = config_dict['condition_embed_dim']
-                                          )
+        encoder = FixedWidthNetwork(in_features = config_dict['input_dim'],
+            hidden_dim = config_dict['hidden_dim'],
+            num_hidden = config_dict['num_hidden'],
+            output_dim = config_dict['hidden_dim'],
+            drop_prob = config_dict['drop_prob'],
+            normalize = config_dict['normalize'],
+            sparse = config_dict['sparse'],
+            sparse_mode = config_dict['sparse_mode'],
+            resnet = config_dict['resnet']
+            )
+        reparameterization_layer = ReparameterizationLayer(
+            input_dim = config_dict['hidden_dim'],
+            latent_dim = config_dict['latent_dim']
+            )
+        return VAEEncoder(encoder = encoder, reparameterization_layer = reparameterization_layer)
 
     def init_decoder(self, config_dict):
         """
         Decoder that converts latent representation back to raw data
         """
-        return ConditionalLinearDecoder(latent_dim = config_dict['latent_dim'],
-                                        output_dim = config_dict['input_dim'],
-                                        num_conditions = config_dict['num_groups'],
-                                        condition_embed_dim = config_dict['condition_embed_dim']
-                                        )
+        decoder = FixedWidthNetwork(in_features = config_dict['latent_dim'] + config_dict['group_embed_dim'],
+            hidden_dim = config_dict['hidden_dim'],
+            num_hidden = config_dict['num_hidden'],
+            output_dim = config_dict['input_dim'],
+            drop_prob = config_dict['drop_prob'],
+            normalize = config_dict['normalize'],
+            sparse = False,
+            resnet = config_dict['resnet']
+            )
+        return ConditionalDecoder(decoder, 
+            num_conditions = config_dict['num_groups'], 
+            condition_embed_dim = config_dict['group_embed_dim'])
     
     def init_classifier(self, config_dict):
         """
         Classifier that predicts the outcome with a latent representation and conditioning information
         """
-        return ConditionalLinearDecoder(latent_dim = config_dict['latent_dim'],
-                                        output_dim = config_dict['output_dim'],
-                                        num_conditions = config_dict['num_groups'],
-                                        condition_embed_dim = config_dict['condition_embed_dim']
-                                        )
+        decoder = FixedWidthNetwork(in_features = config_dict['latent_dim'] + config_dict['group_embed_dim'],
+            hidden_dim = config_dict['hidden_dim'],
+            num_hidden = config_dict['num_hidden'],
+            output_dim = config_dict['output_dim'],
+            drop_prob = config_dict['drop_prob'],
+            normalize = config_dict['normalize'],
+            sparse = False,
+            resnet = config_dict['resnet']
+            )
+        return ConditionalDecoder(decoder, 
+            num_conditions = config_dict['num_groups'], 
+            condition_embed_dim = config_dict['group_embed_dim'])
     
     def init_model(self):
         """
@@ -255,11 +97,18 @@ class CFVAEModel(TorchModel):
         """
         Initialize a final classifier to be trained after the generative model
         """
-        return ConditionalLinearDecoder(latent_dim = config_dict['latent_dim'],
-                                        output_dim = config_dict['output_dim'],
-                                        num_conditions = config_dict['num_groups'],
-                                        condition_embed_dim = config_dict['condition_embed_dim']
-                                        )
+        decoder = FixedWidthNetwork(in_features = config_dict['latent_dim'] + config_dict['group_embed_dim'],
+            hidden_dim = config_dict['hidden_dim'],
+            num_hidden = config_dict['num_hidden'],
+            output_dim = config_dict['output_dim'],
+            drop_prob = config_dict['drop_prob'],
+            normalize = config_dict['normalize'],
+            sparse = False,
+            resnet = config_dict['resnet']
+            )
+        return ConditionalDecoder(decoder, 
+            num_conditions = config_dict['num_groups'], 
+            condition_embed_dim = config_dict['group_embed_dim'])
 
     def init_final_classifier_optim(self):
         """
@@ -314,36 +163,39 @@ class CFVAEModel(TorchModel):
                 mmd_group_loss = mmd_group_loss + self.compute_mmd(z_samples, prior_z)    
 
         return mmd_group_loss
-    
-    def init_loaders(self, data_dict, label_dict, group_dict):
+
+    def init_datasets(self, data_dict, label_dict, group_dict):
         """
-        Initialize the dataloaders for this model
+        Method that converts data and labels to instances of class torch.utils.data.Dataset
+            Args:
+                data_dict: This is a dictionary that minimally contains the keys ['train', 'val']. 
+                    Each element of the dictionary is the data to be converted to Dataset.
+                label_dict: This is a dictionary that minimally contains the keys ['train', 'val'].
+                    Each element of the dictionary are the labels to be converted to Dataset.
+
+            Returns:
+                a dictionary with the same keys as data_dict and label_dict. 
+                    Each element of the dictionary is a Dataset that may be processed by torch.utils.data.DataLoader
         """
-        dataset_dict = {key: TensorDataset(torch.FloatTensor(data_dict[key]), 
-                                           torch.LongTensor(label_dict[key]),
-                                           torch.LongTensor(group_dict[key])
-                                          ) 
+        return {key: ArrayDataset(data_dict[key], 
+                                  torch.LongTensor(label_dict[key]),
+                                  torch.LongTensor(group_dict[key]),
+                                  convert_sparse = False
+                                  ) 
                             for key in data_dict.keys()
-                       }
-        
-        loaders_dict = {key: DataLoader(dataset_dict[key], 
-                                        batch_size = self.config_dict['batch_size']) 
-                            for key in data_dict.keys()
-                       }
-        
-        return loaders_dict
-    
+                }
+
     def init_loss(self):
         """
         Initialize the loss for reconstruction
         """
-        return nn.MSELoss()
+        return nn.BCEWithLogitsLoss()
     
     def init_loss_classification(self):
         """
         Initialize the loss for classification
         """
-        return nn.CrossEntropyLoss()
+        return nn.CrossEntropyLoss(reduction = 'mean')
     
     def init_loss_dict(self, 
         metrics = ['loss', 'elbo', 'mmd', 'reconstruction', 'kl', 'classification', 'mmd_group'], 
@@ -369,13 +221,14 @@ class CFVAEModel(TorchModel):
         loaders = self.init_loaders(data_dict, label_dict, group_dict)
         loss_dict = self.init_loss_dict()
         performance_dict = self.init_performance_dict()
-        self.model.train(False)
+        self.final_classifier.train(False)
         for epoch in range(self.config_dict['num_epochs']):
             print('Epoch {}/{}'.format(epoch, self.config_dict['num_epochs'] - 1))
             print('-' * 10)
 
             for phase in ['train', 'val']:
-                self.final_classifier.train(phase == 'train')
+                self.model.train(phase == 'train')
+                # self.final_classifier.train(phase == 'train')
                 
                 running_loss_dict = {key : 0.0 for key in loss_dict[phase].keys()}
                 output_dict = self.init_output_dict()
@@ -384,6 +237,10 @@ class CFVAEModel(TorchModel):
                     batch_loss_dict = {}
                     i += 1
                     inputs, labels, group = self.transform_batch(the_data)
+                    # print(inputs)
+
+                    # Compute the autoencoder target based on the CSR input
+                    target = torch.FloatTensor(inputs.todense()).to(self.device)
 
                     # zero the parameter gradients
                     self.optimizer.zero_grad()
@@ -392,7 +249,7 @@ class CFVAEModel(TorchModel):
                     outputs, y_outputs, mu, var, z = self.model(inputs, group)
                     
                     # Reconstruction
-                    batch_loss_dict['reconstruction'] = self.criterion(outputs, inputs)
+                    batch_loss_dict['reconstruction'] = self.criterion(outputs, target)
                     
                     # KL
                     batch_loss_dict['kl'] = self.KL_div(mu, var)

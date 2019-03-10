@@ -28,7 +28,7 @@ class TorchModel:
         self.scheduler = self.init_scheduler()
         self.criterion = self.init_loss()
 
-    def init_datasets(self, data_dict, label_dict):
+    def init_datasets(self, data_dict, label_dict, **kwargs):
         """
         Method that converts data and labels to instances of class torch.utils.data.Dataset
             Args:
@@ -46,7 +46,7 @@ class TorchModel:
                             for key in data_dict.keys()
                 }
 
-    def init_loaders(self, data_dict, label_dict):
+    def init_loaders(self, *args, **kwargs):
         """
         Method that converts data and labels to instances of class torch.utils.data.DataLoader
             Args:
@@ -62,7 +62,7 @@ class TorchModel:
         """
 
         # Convert the data to Dataset
-        dataset_dict = self.init_datasets(data_dict, label_dict)
+        dataset_dict = self.init_datasets(*args, **kwargs)
 
         # If the Dataset implements collate_fn, that is used. Otherwise, default_collate is used
         if hasattr(dataset_dict['train'], 'collate_fn') and callable(getattr(dataset_dict['train'], 'collate_fn')):
@@ -272,6 +272,7 @@ class TorchModel:
                     i += 1
                     batch_loss_dict = {}
                     inputs, labels = self.transform_batch(the_data)
+                    print(inputs)
                     
                     # zero parameter gradients
                     self.optimizer.zero_grad()
@@ -387,21 +388,22 @@ class FeedforwardNetModel(TorchModel):
     The primary class for a feedforward network with a fixed number of hidden layers of equal size.
     Has options for sparse inputs, residual connections, dropout, and layer normalization.
     """
-    def init_datasets(self, data_dict, label_dict):
+    def init_datasets(self, data_dict, label_dict, **kwargs):
         """
         Creates data loaders from inputs
         """
+        convert_sparse = True if kwargs['sparse_mode'] == 'binary' else False
         splits = data_dict.keys()
         dataset_dict = {key: ArrayDataset(data_dict[key], 
                                           torch.LongTensor(label_dict[key]),
-                                          convert_sparse = False
+                                          convert_sparse = convert_sparse
                                          )
                                 for key in splits
                         }
         return dataset_dict
 
     def init_model(self):
-        model = FixedWidthClassifier(in_features = self.config_dict['input_dim'],
+        model = FixedWidthNetwork(in_features = self.config_dict['input_dim'],
             hidden_dim = self.config_dict['hidden_dim'],
             num_hidden = self.config_dict['num_hidden'],
             output_dim = self.config_dict['output_dim'],

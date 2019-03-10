@@ -8,7 +8,7 @@ import torch.nn.functional as F
 Subclasses of torch.nn.Module
 """
 
-class FixedWidthClassifier(torch.nn.Module):
+class FixedWidthNetwork(torch.nn.Module):
     """
     Feedforward network with a fixed number of hidden layers of equal size.
     """
