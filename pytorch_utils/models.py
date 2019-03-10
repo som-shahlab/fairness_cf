@@ -272,7 +272,6 @@ class TorchModel:
                     i += 1
                     batch_loss_dict = {}
                     inputs, labels = self.transform_batch(the_data)
-                    print(inputs)
                     
                     # zero parameter gradients
                     self.optimizer.zero_grad()
@@ -388,11 +387,17 @@ class FeedforwardNetModel(TorchModel):
     The primary class for a feedforward network with a fixed number of hidden layers of equal size.
     Has options for sparse inputs, residual connections, dropout, and layer normalization.
     """
-    def init_datasets(self, data_dict, label_dict, **kwargs):
+    def init_datasets(self, data_dict, label_dict):
         """
         Creates data loaders from inputs
         """
-        convert_sparse = True if kwargs['sparse_mode'] == 'binary' else False
+
+        # if self.config_dict.get(sparse):
+
+        # convert_sparse = self.config_dict.get(sparse_mode)
+        convert_sparse = self.config_dict.get('sparse_mode') == 'count'
+        # convert_sparse = True if (self.config_dict.get(sparse_mode) == 'binary') else False
+
         splits = data_dict.keys()
         dataset_dict = {key: ArrayDataset(data_dict[key], 
                                           torch.LongTensor(label_dict[key]),
@@ -401,6 +406,10 @@ class FeedforwardNetModel(TorchModel):
                                 for key in splits
                         }
         return dataset_dict
+
+    # def init_loaders(self, *args, **kwargs):
+
+        # return super().init_loaders(*args, sparse_mode = sparse_mode)
 
     def init_model(self):
         model = FixedWidthNetwork(in_features = self.config_dict['input_dim'],

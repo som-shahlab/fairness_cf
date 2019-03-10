@@ -272,7 +272,7 @@ class CFVAEModel(TorchModel):
                                 (self.config_dict['lambda_classification'] * batch_loss_dict['classification']) + \
                                 (self.config_dict['lambda_mmd_group'] * batch_loss_dict['mmd_group'])
                     # ELBO
-                    batch_loss_dict['elbo'] = batch_loss_dict['reconstruction'] + batch_loss_dict['kl']
+                    batch_loss_dict['elbo'] = batch_loss_dict['reconstruction'] + batch_loss_dict['kl'] + batch_loss_dict['classification']
                     
                     if phase == 'train':
                         batch_loss_dict['loss'].backward()
