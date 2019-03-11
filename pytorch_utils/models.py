@@ -407,8 +407,6 @@ class FeedforwardNetModel(TorchModel):
     def init_model(self):
         model = FeedforwardNet(in_features = self.config_dict['input_dim'],
             hidden_dim_list = self.config_dict['hidden_dim_list'],
-            # hidden_dim = self.config_dict['hidden_dim'],
-            # num_hidden = self.config_dict['num_hidden'],
             output_dim = self.config_dict['output_dim'],
             drop_prob = self.config_dict['drop_prob'],
             normalize = self.config_dict['normalize'],
@@ -425,9 +423,25 @@ class FixedWidthModel(FeedforwardNetModel):
     """
 
     def init_model(self):
-        model = FixedWidthNetwork(in_features = self.config_dict['input_dim'],
-            hidden_dim = self.config_dict['hidden_dim'],
-            num_hidden = self.config_dict['num_hidden'],
+        model = FeedforwardNet(in_features = self.config_dict['input_dim'],
+            hidden_dim_list = self.config_dict['num_hidden'] * [self.config_dict['hidden_dim']],
+            output_dim = self.config_dict['output_dim'],
+            drop_prob = self.config_dict['drop_prob'],
+            normalize = self.config_dict['normalize'],
+            sparse = self.config_dict['sparse'],
+            sparse_mode = self.config_dict['sparse_mode'],
+            resnet = self.config_dict['resnet']
+            )
+        return model
+
+class BottleneckModel(FeedforwardNetModel):
+    def init_model(self):
+
+        hidden_dim_list = [self.config_dict['bottleneck_size'] * \
+            (2**(i)) for i in reversed(range(self.config_dict['num_hidden']))]
+
+        model = FeedforwardNet(in_features = self.config_dict['input_dim'],
+            hidden_dim_list = hidden_dim_list,
             output_dim = self.config_dict['output_dim'],
             drop_prob = self.config_dict['drop_prob'],
             normalize = self.config_dict['normalize'],
