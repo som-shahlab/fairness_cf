@@ -34,29 +34,28 @@ class CFVAEModel(TorchModel):
         """
         Encoder that converts data to latent representation. Should return an instance of class VAEEncoder
         """
-        encoder = FixedWidthNetwork(in_features = config_dict['input_dim'],
-            hidden_dim = config_dict['hidden_dim'],
-            num_hidden = config_dict['num_hidden'],
-            output_dim = config_dict['hidden_dim'],
+        hidden_dim_list = [config_dict['latent_dim'] * \
+            (2**(i + 1)) for i in reversed(range(config_dict['num_hidden']))]
+        encoder = FeedforwardNet(in_features = config_dict['input_dim'],
+            hidden_dim_list = hidden_dim_list,
+            output_dim = config_dict['latent_dim']*2,
             drop_prob = config_dict['drop_prob'],
             normalize = config_dict['normalize'],
             sparse = config_dict['sparse'],
             sparse_mode = config_dict['sparse_mode'],
             resnet = config_dict['resnet']
             )
-        reparameterization_layer = ReparameterizationLayer(
-            input_dim = config_dict['hidden_dim'],
-            latent_dim = config_dict['latent_dim']
-            )
+        reparameterization_layer = ReparameterizationLayer()
         return VAEEncoder(encoder = encoder, reparameterization_layer = reparameterization_layer)
 
     def init_decoder(self, config_dict):
         """
         Decoder that converts latent representation back to raw data
         """
-        decoder = FixedWidthNetwork(in_features = config_dict['latent_dim'] + config_dict['group_embed_dim'],
-            hidden_dim = config_dict['hidden_dim'],
-            num_hidden = config_dict['num_hidden'],
+        hidden_dim_list = [(config_dict['latent_dim'] + config_dict['group_embed_dim']) * \
+            (2**(i + 1)) for i in range(config_dict['num_hidden'])]
+        decoder = FeedforwardNet(in_features = config_dict['latent_dim'] + config_dict['group_embed_dim'],
+            hidden_dim_list = hidden_dim_list,
             output_dim = config_dict['input_dim'],
             drop_prob = config_dict['drop_prob'],
             normalize = config_dict['normalize'],
@@ -71,9 +70,8 @@ class CFVAEModel(TorchModel):
         """
         Classifier that predicts the outcome with a latent representation and conditioning information
         """
-        decoder = FixedWidthNetwork(in_features = config_dict['latent_dim'] + config_dict['group_embed_dim'],
-            hidden_dim = config_dict['hidden_dim_classifier'],
-            num_hidden = config_dict['num_hidden_classifier'],
+        decoder = FeedforwardNet(in_features = config_dict['latent_dim'] + config_dict['group_embed_dim'],
+            hidden_dim_list = config_dict['num_hidden_classifier'] * [config_dict['hidden_dim_classifier']],
             output_dim = config_dict['output_dim'],
             drop_prob = config_dict['drop_prob_classifier'],
             normalize = config_dict['normalize_classifier'],
@@ -97,14 +95,13 @@ class CFVAEModel(TorchModel):
         """
         Initialize a final classifier to be trained after the generative model
         """
-        decoder = FixedWidthNetwork(in_features = config_dict['latent_dim'] + config_dict['group_embed_dim'],
-            hidden_dim = config_dict['hidden_dim'],
-            num_hidden = config_dict['num_hidden'],
+        decoder = FeedforwardNet(in_features = config_dict['latent_dim'] + config_dict['group_embed_dim'],
+            hidden_dim_list = config_dict['num_hidden_classifier'] * [config_dict['hidden_dim_classifier']],
             output_dim = config_dict['output_dim'],
-            drop_prob = config_dict['drop_prob'],
-            normalize = config_dict['normalize'],
+            drop_prob = config_dict['drop_prob_classifier'],
+            normalize = config_dict['normalize_classifier'],
             sparse = False,
-            resnet = config_dict['resnet']
+            resnet = config_dict['resnet_classifier']
             )
         return ConditionalDecoder(decoder, 
             num_conditions = config_dict['num_groups'], 
@@ -266,7 +263,7 @@ class CFVAEModel(TorchModel):
                     batch_loss_dict['mmd_group'] = self.compute_mmd_group(z, prior_samples, group)
                     
                     # Aggregate the losses
-                    batch_loss_dict['loss'] = batch_loss_dict['reconstruction'] + \
+                    batch_loss_dict['loss'] = (self.config_dict['lambda_reconstruction'] * batch_loss_dict['reconstruction']) + \
                                 (self.config_dict['lambda_mmd'] * batch_loss_dict['mmd']) + \
                                 (self.config_dict['lambda_kl'] * batch_loss_dict['kl']) + \
                                 (self.config_dict['lambda_classification'] * batch_loss_dict['classification']) + \
@@ -285,14 +282,10 @@ class CFVAEModel(TorchModel):
                 epoch_loss_dict = {key: running_loss_dict[key] / i for key in running_loss_dict.keys()}
                 # Update the loss dict
                 loss_dict[phase] = self.update_metric_dict(loss_dict[phase], epoch_loss_dict)
-                # epoch_loss_str = ''.format(phase).join([' {}: {:4f},'.format(k, v) 
-                                                        # for k, v in epoch_loss_dict.items()])
                 
                 # Update the performance dict
                 epoch_statistics = self.compute_epoch_statistics(output_dict)
                 performance_dict[phase] = self.update_metric_dict(performance_dict[phase], epoch_statistics)
-                # epoch_stats_str = ''.format(phase).join([' {}: {:4f},'.format(k, v) 
-                                                         # for k, v in epoch_statistics.items()])
                 
                 print('Phase: {}:'.format(phase))
                 self.print_metric_dict(epoch_loss_dict)
@@ -309,6 +302,75 @@ class CFVAEModel(TorchModel):
         
         result_dict = {phase: {**performance_dict[phase], **loss_dict[phase]} for phase in performance_dict.keys()}
         return result_dict
+
+    def predict(self, data_dict, label_dict, group_dict, phases = ['test']):
+        """
+        Train the generative model
+        """
+        loaders = self.init_loaders(data_dict, label_dict, group_dict)
+        loss_dict = self.init_loss_dict()
+        performance_dict = self.init_performance_dict(phases = phases)
+        self.model.train(False)
+        with torch.no_grad():
+            output_dict_dict = {}
+            for phase in phases:
+                running_loss_dict = {key : 0.0 for key in loss_dict[phase].keys()}
+                output_dict = self.init_output_dict()
+                i = 0
+                for the_data in loaders[phase]:
+                    batch_loss_dict = {}
+                    i += 1
+                    inputs, labels, group = self.transform_batch(the_data)
+
+                    # Compute the autoencoder target based on the CSR input
+                    target = torch.FloatTensor(inputs.todense()).to(self.device)
+
+                    # forward
+                    outputs, y_outputs, mu, var, z = self.model(inputs, group)
+                    output_dict = self.update_output_dict(output_dict, y_outputs, labels)
+
+                    # Reconstruction
+                    batch_loss_dict['reconstruction'] = self.criterion(outputs, target)
+                    
+                    # KL
+                    batch_loss_dict['kl'] = self.KL_div(mu, var)
+
+                    # MMD
+                    prior_samples = torch.randn_like(z, requires_grad = False)
+                    batch_loss_dict['mmd'] = self.compute_mmd(z, prior_samples)
+                    
+                    # Classification
+                    batch_loss_dict['classification'] = self.criterion_classification(y_outputs, labels)
+                    output_dict = self.update_output_dict(output_dict, y_outputs, labels)
+
+                    # Group MMD (see Louizos 2016: http://arxiv.org/abs/1511.00830)
+                    batch_loss_dict['mmd_group'] = self.compute_mmd_group(z, prior_samples, group)
+                    
+                    # Aggregate the losses
+                    batch_loss_dict['loss'] = (self.config_dict['lambda_reconstruction'] * batch_loss_dict['reconstruction']) + \
+                                (self.config_dict['lambda_mmd'] * batch_loss_dict['mmd']) + \
+                                (self.config_dict['lambda_kl'] * batch_loss_dict['kl']) + \
+                                (self.config_dict['lambda_classification'] * batch_loss_dict['classification']) + \
+                                (self.config_dict['lambda_mmd_group'] * batch_loss_dict['mmd_group'])
+                    # ELBO
+                    batch_loss_dict['elbo'] = batch_loss_dict['reconstruction'] + batch_loss_dict['kl'] + batch_loss_dict['classification']
+                    
+                    
+                    for key in batch_loss_dict.keys():
+                        running_loss_dict[key] += batch_loss_dict[key].item()
+
+                # Compute Losses
+                epoch_loss_dict = {key: running_loss_dict[key] / i for key in running_loss_dict.keys()}
+                # Update the loss dict
+                loss_dict[phase] = self.update_metric_dict(loss_dict[phase], epoch_loss_dict)
+                
+                # Update the performance dict
+                epoch_statistics = self.compute_epoch_statistics(output_dict)
+                performance_dict[phase] = self.update_metric_dict(performance_dict[phase], epoch_statistics)
+                output_dict_dict[phase] = self.finalize_output_dict(output_dict)
+
+        result_dict = {phase: {**performance_dict[phase], **loss_dict[phase]} for phase in performance_dict.keys()}
+        return output_dict_dict, result_dict
 
     def sample_labels(self, outputs):
         """

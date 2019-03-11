@@ -13,18 +13,19 @@ class FeedforwardNet(torch.nn.Module):
     Feedforward network of arbitrary size
     """
     def __init__(self, in_features, hidden_dim_list = [], output_dim = 2, 
-        drop_prob = 0.0, normalize = False, activation = F.leaky_relu, sparse = False, sparse_mode = 'binary', resnet = False):
+        drop_prob = 0.0, normalize = False, activation = F.leaky_relu, 
+        sparse = False, sparse_mode = 'binary', resnet = False):
         super().__init__()
 
         num_hidden = len(hidden_dim_list)
         ## If no hidden layers - go right from input to output (equivalent to logistic regression)
         if num_hidden == 0:
-            self.output_layer = LinearLayerWrapper(in_features, output_dim, sparse = sparse, sparse_mode = sparse_mode)
-            self.layers = nn.ModuleList([self.output_layer])
+            output_layer = LinearLayerWrapper(in_features, output_dim, sparse = sparse, sparse_mode = sparse_mode)
+            self.layers = nn.ModuleList([output_layer])
 
         ## If 1 or more hidden layer, create input and output layer separately
         elif num_hidden >= 1:
-            self.input_layer = HiddenLinearLayer(in_features = in_features,
+            input_layer = HiddenLinearLayer(in_features = in_features,
                                                 out_features = hidden_dim_list[0],
                                                 drop_prob = drop_prob,
                                                 normalize = normalize,
@@ -32,14 +33,14 @@ class FeedforwardNet(torch.nn.Module):
                                                 sparse = sparse,
                                                 sparse_mode = sparse_mode
                                                 )
-            self.layers = nn.ModuleList([self.input_layer])
+            self.layers = nn.ModuleList([input_layer])
             if resnet:
                 self.layers.extend([ResidualBlock(hidden_dim = hidden_dim_list[0], 
                                                 drop_prob = drop_prob,
                                                 normalize = normalize,
                                                 activation = activation)])
 
-            self.output_layer = nn.Linear(hidden_dim_list[-1], output_dim)
+            output_layer = nn.Linear(hidden_dim_list[-1], output_dim)
 
             ## If more than one hidden layer, create intermediate hidden layers
             if num_hidden > 1:
@@ -67,23 +68,23 @@ class FeedforwardNet(torch.nn.Module):
                                                           normalize = normalize,
                                                           activation = activation
                                                           )])
-            self.layers.extend([self.output_layer])
+            self.layers.extend([output_layer])
 
     def forward(self, x):
         y_pred = nn.Sequential(*self.layers).forward(x)
         return y_pred
 
-class FixedWidthNetwork(FeedforwardNet):
-    """
-    Feedforward network with a fixed number of hidden layers of equal size.
-    """
-    def __init__(self, in_features, hidden_dim, num_hidden, output_dim = 2, 
-        drop_prob = 0.0, normalize = False, activation = F.leaky_relu, sparse = False, sparse_mode = 'binary', resnet = False):
+# class FixedWidthNetwork(FeedforwardNet):
+#     """
+#     Feedforward network with a fixed number of hidden layers of equal size.
+#     """
+#     def __init__(self, in_features, hidden_dim, num_hidden, output_dim = 2, 
+#         drop_prob = 0.0, normalize = False, activation = F.leaky_relu, sparse = False, sparse_mode = 'binary', resnet = False):
 
-        # Send to FeedforwardNet
-        super().__init__(in_features = in_features, hidden_dim_list = num_hidden * [hidden_dim], 
-            output_dim = output_dim, drop_prob = drop_prob, normalize = normalize, 
-            activation = activation, sparse = sparse, sparse_mode = sparse_mode, resnet = resnet)
+#         # Send to FeedforwardNet
+#         super().__init__(in_features = in_features, hidden_dim_list = num_hidden * [hidden_dim], 
+#             output_dim = output_dim, drop_prob = drop_prob, normalize = normalize, 
+#             activation = activation, sparse = sparse, sparse_mode = sparse_mode, resnet = resnet)
 
 class SequentialLayers(nn.Module):
     """
