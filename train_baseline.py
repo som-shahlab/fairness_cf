@@ -9,10 +9,8 @@ import argparse
 from sklearn.externals import joblib
 
 from pytorch_utils.datasets import ArrayDataset
-from pytorch_utils.models import FeedforwardNetModel
+from pytorch_utils.models import FeedforwardNetModel, FixedWidthModel
 import pytorch_utils
-
-
 
 if __name__ == '__main__':
   parser = argparse.ArgumentParser()
@@ -22,9 +20,6 @@ if __name__ == '__main__':
   parser.add_argument('--outcome',
                       type = str,
                       default = 'los')
-  parser.add_argument('--sensitive_variable',
-                      type = str,
-                      default = 'age')
   parser.add_argument('--config_path',
     type=str,
     default='config/defaults/baseline.yaml')
@@ -58,28 +53,10 @@ if __name__ == '__main__':
   with open(config_path, 'r') as fp:
       config_dict = yaml.load(fp)
       
-  # config_dict['num_epochs'] = 3 # For testing
-
-  ## A more complex network
-  # config_dict = {
-  #     'input_dim' : data_dict['train'].shape[1],
-  #     'lr' : 1e-5,
-  #     'num_epochs' : 20,
-  #     'batch_size' : 256,
-  #     'hidden_dim' : 128,
-  #     'num_hidden' : 1,
-  #     'output_dim' : 2,
-  #     'drop_prob' : 0.5,
-  #     'normalize' : True,
-  #     'iters_per_epoch' : 100,
-  #     'gamma' : 0.99,
-  #     'resnet' : True,
-  #     'sparse' : True,
-  #     'sparse_mode' : 'binary'
-  # }
   print(config_dict)
 
-  model = FeedforwardNetModel(config_dict)
+  # model = FeedforwardNetModel(config_dict)
+  model = FixedWidthModel(config_dict)
   result = model.train(data_dict, label_dict)
   result_eval = model.predict(data_dict, label_dict, phases = ['val', 'test'])
 
@@ -123,6 +100,6 @@ if __name__ == '__main__':
 
   print(result_df_by_group)
 
-  result_df_training.to_csv(os.path.join(performance_path, '{}_training'.format(time_str)), index = False)
-  result_df_eval.to_csv(os.path.join(performance_path, '{}_eval'.format(time_str)), index = False)
-  result_df_by_group.to_csv(os.path.join(performance_path, '{}_by_group'.format(time_str)), index = False)
+  result_df_training.to_csv(os.path.join(performance_path, '{}_training.csv'.format(time_str)), index = False)
+  result_df_eval.to_csv(os.path.join(performance_path, '{}_eval.csv'.format(time_str)), index = False)
+  result_df_by_group.to_csv(os.path.join(performance_path, '{}_by_group.csv'.format(time_str)), index = False)

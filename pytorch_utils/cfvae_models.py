@@ -72,13 +72,13 @@ class CFVAEModel(TorchModel):
         Classifier that predicts the outcome with a latent representation and conditioning information
         """
         decoder = FixedWidthNetwork(in_features = config_dict['latent_dim'] + config_dict['group_embed_dim'],
-            hidden_dim = config_dict['hidden_dim'],
-            num_hidden = config_dict['num_hidden'],
+            hidden_dim = config_dict['hidden_dim_classifier'],
+            num_hidden = config_dict['num_hidden_classifier'],
             output_dim = config_dict['output_dim'],
-            drop_prob = config_dict['drop_prob'],
-            normalize = config_dict['normalize'],
+            drop_prob = config_dict['drop_prob_classifier'],
+            normalize = config_dict['normalize_classifier'],
             sparse = False,
-            resnet = config_dict['resnet']
+            resnet = config_dict['resnet_classifier']
             )
         return ConditionalDecoder(decoder, 
             num_conditions = config_dict['num_groups'], 

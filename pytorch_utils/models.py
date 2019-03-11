@@ -384,7 +384,7 @@ class TorchModel:
 
 class FeedforwardNetModel(TorchModel):
     """
-    The primary class for a feedforward network with a fixed number of hidden layers of equal size.
+    The primary class for a feedforward network.
     Has options for sparse inputs, residual connections, dropout, and layer normalization.
     """
     def init_datasets(self, data_dict, label_dict):
@@ -392,11 +392,8 @@ class FeedforwardNetModel(TorchModel):
         Creates data loaders from inputs
         """
 
-        # if self.config_dict.get(sparse):
-
-        # convert_sparse = self.config_dict.get(sparse_mode)
+        ## If data is count, then convert any sparse inputs to sparse tensors
         convert_sparse = self.config_dict.get('sparse_mode') == 'count'
-        # convert_sparse = True if (self.config_dict.get(sparse_mode) == 'binary') else False
 
         splits = data_dict.keys()
         dataset_dict = {key: ArrayDataset(data_dict[key], 
@@ -407,9 +404,25 @@ class FeedforwardNetModel(TorchModel):
                         }
         return dataset_dict
 
-    # def init_loaders(self, *args, **kwargs):
+    def init_model(self):
+        model = FeedforwardNet(in_features = self.config_dict['input_dim'],
+            hidden_dim_list = self.config_dict['hidden_dim_list'],
+            # hidden_dim = self.config_dict['hidden_dim'],
+            # num_hidden = self.config_dict['num_hidden'],
+            output_dim = self.config_dict['output_dim'],
+            drop_prob = self.config_dict['drop_prob'],
+            normalize = self.config_dict['normalize'],
+            sparse = self.config_dict['sparse'],
+            sparse_mode = self.config_dict['sparse_mode'],
+            resnet = self.config_dict['resnet']
+            )
+        return model
 
-        # return super().init_loaders(*args, sparse_mode = sparse_mode)
+class FixedWidthModel(FeedforwardNetModel):
+    """
+    The primary class for a feedforward network with a fixed number of hidden layers of equal size.
+    Has options for sparse inputs, residual connections, dropout, and layer normalization.
+    """
 
     def init_model(self):
         model = FixedWidthNetwork(in_features = self.config_dict['input_dim'],
