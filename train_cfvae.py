@@ -36,7 +36,10 @@ if __name__ == '__main__':
 
   features_path = os.path.join(args.project_dir, 'features', str(0))
   label_path = os.path.join(args.project_dir, 'labels')
-  config_path = os.path.join(args.project_dir, args.config_path)
+  if args.config_path == '':
+    config_path = os.path.join(args.project_dir, 'config', 'defaults', 'cfvae', args.outcome, args.sensitive_variable, 'model_config.yaml')
+  else:
+    config_path = os.path.join(args.project_dir, args.config_path)
 
 
   checkpoints_path = os.path.join(args.project_dir, 'checkpoints', args.experiment_name, args.outcome, args.sensitive_variable, args.trial_id)
