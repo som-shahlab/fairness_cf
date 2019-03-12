@@ -234,10 +234,11 @@ class CFVAEModel(TorchModel):
                     batch_loss_dict = {}
                     i += 1
                     inputs, labels, group = self.transform_batch(the_data)
-                    # print(inputs)
 
                     # Compute the autoencoder target based on the CSR input
                     target = torch.FloatTensor(inputs.todense()).to(self.device)
+
+                    ## Cap 
 
                     # zero the parameter gradients
                     self.optimizer.zero_grad()
@@ -308,7 +309,7 @@ class CFVAEModel(TorchModel):
         Train the generative model
         """
         loaders = self.init_loaders(data_dict, label_dict, group_dict)
-        loss_dict = self.init_loss_dict()
+        loss_dict = self.init_loss_dict(phases = phases)
         performance_dict = self.init_performance_dict(phases = phases)
         self.model.train(False)
         with torch.no_grad():
