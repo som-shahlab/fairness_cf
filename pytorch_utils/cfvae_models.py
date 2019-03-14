@@ -322,6 +322,7 @@ class CFVAEModel(TorchModel):
         """
         loaders = self.init_loaders(data_dict, label_dict, group_dict)
         loss_dict = self.init_loss_dict(phases = phases)
+        group_binarizer = self.init_binarizer(group_dict)
         performance_dict = self.init_performance_dict(phases = phases)
         self.model.train(False)
         with torch.no_grad():
@@ -338,8 +339,12 @@ class CFVAEModel(TorchModel):
                     # Compute the autoencoder target based on the CSR input
                     target = torch.FloatTensor(inputs.todense()).to(self.device)
 
+                    # Combine the inputs
+                    combined_inputs = scipy.sparse.hstack((inputs, 
+                        group_binarizer.transform(group.cpu().numpy())), format = 'csr')
+
                     # forward
-                    outputs, y_outputs, mu, var, z = self.model(inputs, group)
+                    outputs, y_outputs, mu, var, z = self.model(combined_inputs, group)
                     output_dict = self.update_output_dict(output_dict, y_outputs, labels)
 
                     # Reconstruction

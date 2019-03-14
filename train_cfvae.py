@@ -35,7 +35,7 @@ if __name__ == '__main__':
   args = parser.parse_args()
 
   # features_path = os.path.join(args.project_dir, 'features', str(0))
-  features_path = os.path.join(args.data_path, 'features', str(0), '{}_excluded'.format(args.sensitive_variable))
+  features_path = os.path.join(args.project_dir, 'features', str(0), '{}_excluded'.format(args.sensitive_variable))
   label_path = os.path.join(args.project_dir, 'labels')
   if args.config_path == '':
     config_path = os.path.join(args.project_dir, 'config', 'defaults', 'cfvae', args.outcome, args.sensitive_variable, 'model_config.yaml')
