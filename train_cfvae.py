@@ -31,6 +31,11 @@ if __name__ == '__main__':
   parser.add_argument('--trial_id',
     type=str,
     default='0')
+  parser.add_argument('--save_weights',
+    )
+  parser.add_argument('--save_checkpoints', dest='save_checkpoints', action='store_true')
+  parser.add_argument('--no_checkpoints', dest='save_checkpoints', action='store_false')
+  parser.set_defaults(save_checkpoints=True)
 
   args = parser.parse_args()
 
@@ -42,11 +47,11 @@ if __name__ == '__main__':
   else:
     config_path = os.path.join(args.project_dir, args.config_path)
 
+  if args.save_checkpoints:
+    checkpoints_path = os.path.join(args.project_dir, 'checkpoints', args.experiment_name, args.outcome, args.sensitive_variable, args.trial_id)
+    os.makedirs(checkpoints_path, exist_ok=True)
 
-  checkpoints_path = os.path.join(args.project_dir, 'checkpoints', args.experiment_name, args.outcome, args.sensitive_variable, args.trial_id)
   performance_path = os.path.join(args.project_dir, 'performance', args.experiment_name, args.outcome, args.sensitive_variable, args.trial_id)
-
-  os.makedirs(checkpoints_path, exist_ok=True)
   os.makedirs(performance_path, exist_ok=True)
 
   time_str = str(time.time())
@@ -73,7 +78,8 @@ if __name__ == '__main__':
   result_eval = model.predict(data_dict, label_dict, group_dict, phases = ['val', 'test'])
 
   ## Save weights
-  model.save_weights(os.path.join(checkpoints_path, '{}.chk'.format(time_str)))
+  if args.save_checkpoints:
+    model.save_weights(os.path.join(checkpoints_path, '{}.chk'.format(time_str)))
 
   # Get results
   result_df_training = model.process_result_dict(result)
