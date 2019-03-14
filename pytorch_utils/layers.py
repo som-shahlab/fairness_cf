@@ -74,18 +74,6 @@ class FeedforwardNet(torch.nn.Module):
         y_pred = nn.Sequential(*self.layers).forward(x)
         return y_pred
 
-# class FixedWidthNetwork(FeedforwardNet):
-#     """
-#     Feedforward network with a fixed number of hidden layers of equal size.
-#     """
-#     def __init__(self, in_features, hidden_dim, num_hidden, output_dim = 2, 
-#         drop_prob = 0.0, normalize = False, activation = F.leaky_relu, sparse = False, sparse_mode = 'binary', resnet = False):
-
-#         # Send to FeedforwardNet
-#         super().__init__(in_features = in_features, hidden_dim_list = num_hidden * [hidden_dim], 
-#             output_dim = output_dim, drop_prob = drop_prob, normalize = normalize, 
-#             activation = activation, sparse = sparse, sparse_mode = sparse_mode, resnet = resnet)
-
 class SequentialLayers(nn.Module):
     """
     Wraps an arbitrary list of layers with nn.Sequential.

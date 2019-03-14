@@ -3,6 +3,9 @@ import copy
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+import sklearn.preprocessing
+import scipy
+
 from torch.utils.data import TensorDataset, DataLoader, RandomSampler, BatchSampler
 from torch.utils.data.dataloader import default_collate
 from sklearn.metrics import roc_auc_score, average_precision_score, brier_score_loss
@@ -36,9 +39,9 @@ class CFVAEModel(TorchModel):
         """
         hidden_dim_list = [config_dict['latent_dim'] * \
             (2**(i + 1)) for i in reversed(range(config_dict['num_hidden']))]
-        encoder = FeedforwardNet(in_features = config_dict['input_dim'],
+        encoder = FeedforwardNet(in_features = config_dict['input_dim'] + config_dict['num_groups'],
             hidden_dim_list = hidden_dim_list,
-            output_dim = config_dict['latent_dim']*2,
+            output_dim = config_dict['latent_dim']*2, ## for mu, var in latent
             drop_prob = config_dict['drop_prob'],
             normalize = config_dict['normalize'],
             sparse = config_dict['sparse'],
@@ -209,6 +212,11 @@ class CFVAEModel(TorchModel):
         """
         return self.init_metric_dict(metrics = metrics, phases = phases)
 
+    def init_binarizer(self, group_dict):
+        binarizer = sklearn.preprocessing.LabelBinarizer(sparse_output = True)
+        binarizer.fit(group_dict['train'])
+        return binarizer
+
     def train(self, data_dict, label_dict, group_dict):
         """
         Train the generative model
@@ -216,6 +224,7 @@ class CFVAEModel(TorchModel):
         best_performance = 1e18
 
         loaders = self.init_loaders(data_dict, label_dict, group_dict)
+        group_binarizer = self.init_binarizer(group_dict)
         loss_dict = self.init_loss_dict()
         performance_dict = self.init_performance_dict()
         self.final_classifier.train(False)
@@ -233,18 +242,21 @@ class CFVAEModel(TorchModel):
                 for the_data in loaders[phase]:
                     batch_loss_dict = {}
                     i += 1
+                    
                     inputs, labels, group = self.transform_batch(the_data)
 
                     # Compute the autoencoder target based on the CSR input
                     target = torch.FloatTensor(inputs.todense()).to(self.device)
 
-                    ## Cap 
+                    # Combine the inputs with the group data
+                    combined_inputs = scipy.sparse.hstack((inputs, 
+                        group_binarizer.transform(group.cpu().numpy())), format = 'csr')
 
                     # zero the parameter gradients
                     self.optimizer.zero_grad()
 
                     # forward
-                    outputs, y_outputs, mu, var, z = self.model(inputs, group)
+                    outputs, y_outputs, mu, var, z = self.model(combined_inputs, group)
                     
                     # Reconstruction
                     batch_loss_dict['reconstruction'] = self.criterion(outputs, target)
@@ -398,7 +410,7 @@ class CFVAEModel(TorchModel):
             print('-' * 10)
 
             for phase in ['train', 'val']:
-                
+                self.final_classifier.train(phase == 'train')
                 running_loss_dict = {key : 0.0 for key in loss_dict[phase].keys()}
                 output_dict = self.init_output_dict()
                 output_dict_cf = self.init_output_dict()
@@ -412,7 +424,7 @@ class CFVAEModel(TorchModel):
                     self.final_classifier_optimizer.zero_grad()
 
                     # forward
-                    z, _, _ = self.model.encoder(inputs, group)
+                    z, _, _ = self.model.encoder(inputs)
 
                     # Compute the factual loss
                     y_outputs = self.final_classifier(z, group)

@@ -46,10 +46,16 @@ class VAEEncoder(torch.nn.Module):
     def forward(self, x):
         return self.reparameterization_layer(self.encoder(x))
 
+class ConditionalEncoder(torch.nn.Module):
+    """
+    Wraps an encoder with a new encoder that usses conditioning information
+    """
+
+
 class ConditionalDecoder(torch.nn.Module):
     """
     Wraps a decoder with a new decoder that uses conditioning information.
-    Decoder definition is expected to account for dimensionality change
+    Encoder definition is expected to account for dimensionality change
     """
     def __init__(self, decoder, num_conditions, condition_embed_dim):
         super().__init__()
