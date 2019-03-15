@@ -405,6 +405,7 @@ class CFVAEModel(TorchModel):
         best_performance = 1e18
 
         loaders = self.init_loaders(data_dict, label_dict, group_dict)
+        group_binarizer = self.init_binarizer(group_dict)
         loss_dict = self.init_loss_dict(metrics = ['loss', 'classification', 'classification_cf', 'clp'])
         performance_dict = self.init_performance_dict()
         performance_dict_cf = self.init_performance_dict()
@@ -425,11 +426,13 @@ class CFVAEModel(TorchModel):
                     i += 1
                     inputs, labels, group = self.transform_batch(the_data)
 
+                    combined_inputs = scipy.sparse.hstack((inputs, 
+                        group_binarizer.transform(group.cpu().numpy())), format = 'csr')
                     # zero the parameter gradients
                     self.final_classifier_optimizer.zero_grad()
 
                     # forward
-                    z, _, _ = self.model.encoder(inputs)
+                    z, _, _ = self.model.encoder(combined_inputs)
 
                     # Compute the factual loss
                     y_outputs = self.final_classifier(z, group)
@@ -472,8 +475,8 @@ class CFVAEModel(TorchModel):
                     output_dict = self.update_output_dict(output_dict, y_outputs, labels)
                     output_dict_cf = self.update_output_dict(output_dict_cf, y_outputs_cf, y_cf)
                     batch_loss_dict['loss'] = batch_loss_dict['classification'] + \
-                                                self.config_dict['lambda_final_classifier_cf'] + batch_loss_dict['classification_cf'] + \
-                                                self.config_dict['lambda_clp'] + batch_loss_dict['clp']
+                                                self.config_dict['lambda_final_classifier_cf'] * batch_loss_dict['classification_cf'] + \
+                                                self.config_dict['lambda_clp'] * batch_loss_dict['clp']
                     
                     if phase == 'train':
                         batch_loss_dict['loss'].backward()
@@ -522,6 +525,7 @@ class CFVAEModel(TorchModel):
         best_performance = 1e18
 
         loaders = self.init_loaders(data_dict, label_dict, group_dict)
+        group_binarizer = self.init_binarizer(group_dict)
         loss_dict = self.init_loss_dict(metrics = ['loss', 'classification', 'classification_cf', 'clp'], phases = phases)
         performance_dict = self.init_performance_dict(phases = phases)
         performance_dict_cf = self.init_performance_dict(phases = phases)
@@ -537,7 +541,9 @@ class CFVAEModel(TorchModel):
                     batch_loss_dict = {}
                     i += 1
                     inputs, labels, group = self.transform_batch(the_data)
-
+                    
+                    combined_inputs = scipy.sparse.hstack((inputs, 
+                        group_binarizer.transform(group.cpu().numpy())), format = 'csr')
                     # zero the parameter gradients
                     # self.final_classifier_optimizer.zero_grad()
 
@@ -585,8 +591,8 @@ class CFVAEModel(TorchModel):
                     output_dict = self.update_output_dict(output_dict, y_outputs, labels)
                     output_dict_cf = self.update_output_dict(output_dict_cf, y_outputs_cf, y_cf)
                     batch_loss_dict['loss'] = batch_loss_dict['classification'] + \
-                                                self.config_dict['lambda_final_classifier_cf'] + batch_loss_dict['classification_cf'] + \
-                                                self.config_dict['lambda_clp'] + batch_loss_dict['clp']
+                                                self.config_dict['lambda_final_classifier_cf'] * batch_loss_dict['classification_cf'] + \
+                                                self.config_dict['lambda_clp'] * batch_loss_dict['clp']
                     
                     for key in batch_loss_dict.keys():
                         running_loss_dict[key] += batch_loss_dict[key].item()
