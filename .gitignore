@@ -9,3 +9,7 @@
 *.RData
 *.swp
 *.tex
+.DS_Store
+._.DS_Store
+.idea/*
+*.pkl

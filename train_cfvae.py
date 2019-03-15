@@ -31,8 +31,6 @@ if __name__ == '__main__':
   parser.add_argument('--trial_id',
     type=str,
     default='0')
-  parser.add_argument('--save_weights',
-    )
   parser.add_argument('--save_checkpoints', dest='save_checkpoints', action='store_true')
   parser.add_argument('--no_checkpoints', dest='save_checkpoints', action='store_false')
   parser.set_defaults(save_checkpoints=True)
