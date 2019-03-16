@@ -542,6 +542,18 @@ class CFVAEModel(TorchModel):
 
         return {key: torch.cat(value, dim = 0) for key, value in cf_dict.items()}
 
+    def clp_loss(self, outputs_factual, outputs_cf, reduction = 'sum'):
+        result = (outputs_factual - outputs_cf) ** 2
+        if reduction == 'sum':
+            return result.sum()
+        elif reduction == 'mean':
+            return result.mean()
+        else:
+            raise ValueError('Please specify either sum or mean to clp_loss')
+
+    def clp_entropy_loss(self, outputs_factual, outputs_cf, reduction = 'sum'):
+        return F.binary_cross_entropy_with_logits(outputs_factual, F.softmax(outputs_cf, dim = 1), reduction = reduction)
+
     def train_final_classifier(self, data_dict, label_dict, group_dict):
         """
         Train the final classifier
@@ -550,7 +562,7 @@ class CFVAEModel(TorchModel):
 
         loaders = self.init_loaders(data_dict, label_dict, group_dict)
         group_binarizer = self.init_binarizer(group_dict)
-        loss_dict = self.init_loss_dict(metrics = ['loss', 'classification', 'classification_cf', 'clp'])
+        loss_dict = self.init_loss_dict(metrics = ['loss', 'classification', 'classification_cf', 'clp', 'clp_entropy'])
         performance_dict = self.init_performance_dict()
         performance_dict_cf = self.init_performance_dict()
         self.model.train(False)
@@ -594,7 +606,10 @@ class CFVAEModel(TorchModel):
                     y_outputs_cf = self.final_classifier(cf_dict['z'], cf_dict['group_cf'])
 
                     batch_loss_dict['classification_cf'] = self.criterion_classification(y_outputs_cf, cf_dict['y_cf'])
-                    batch_loss_dict['clp'] = ((y_outputs_factual[cf_dict['y_mask'], :] - y_outputs_cf[cf_dict['y_mask'], :]) ** 2).sum()
+                    batch_loss_dict['clp'] = self.clp_loss(y_outputs_factual[cf_dict['y_mask'], :], 
+                        y_outputs_cf[cf_dict['y_mask'], :], reduction = 'sum')
+                    batch_loss_dict['clp_entropy'] = self.clp_entropy_loss(y_outputs_factual[cf_dict['y_mask'], :], 
+                        y_outputs_cf[cf_dict['y_mask'], :], reduction = 'sum')
 
                     output_dict = self.update_output_dict(output_dict, y_outputs, labels)
                     output_dict_cf = self.update_output_dict(output_dict_cf, y_outputs_cf, cf_dict['y_cf'])
@@ -602,7 +617,8 @@ class CFVAEModel(TorchModel):
                     # print(phase, num_mask_batch, len(cf_dict['y_mask']))
                     batch_loss_dict['loss'] = batch_loss_dict['classification'] + \
                                                 self.config_dict['lambda_final_classifier_cf'] * batch_loss_dict['classification_cf'] + \
-                                                (self.config_dict['lambda_clp'] * batch_loss_dict['clp'] / num_mask_batch)
+                                                (self.config_dict['lambda_clp'] * batch_loss_dict['clp'] / num_mask_batch) + \
+                                                (self.config_dict['lambda_clp_entropy'] * batch_loss_dict['clp_entropy'] / num_mask_batch)
                     
                     if phase == 'train':
                         batch_loss_dict['loss'].backward()
@@ -612,7 +628,7 @@ class CFVAEModel(TorchModel):
                         running_loss_dict[key] += batch_loss_dict[key].item()
 
                 # Compute Losses
-                scaling_dict = {key : i if key is not 'clp' else int(num_mask.cpu()) for key in running_loss_dict.keys()}
+                scaling_dict = {key : i if key not in ['clp', 'clp_entropy'] else int(num_mask.cpu()) for key in running_loss_dict.keys()}
                 epoch_loss_dict = {key: running_loss_dict[key] / scaling_dict[key] for key in running_loss_dict.keys()}
                 # Update the loss dict
                 loss_dict[phase] = self.update_metric_dict(loss_dict[phase], epoch_loss_dict)
@@ -653,7 +669,7 @@ class CFVAEModel(TorchModel):
 
         loaders = self.init_loaders(data_dict, label_dict, group_dict)
         group_binarizer = self.init_binarizer(group_dict)
-        loss_dict = self.init_loss_dict(metrics = ['loss', 'classification', 'classification_cf', 'clp'], phases = phases)
+        loss_dict = self.init_loss_dict(metrics = ['loss', 'classification', 'classification_cf', 'clp', 'clp_entropy'], phases = phases)
         performance_dict = self.init_performance_dict(phases = phases)
         performance_dict_cf = self.init_performance_dict(phases = phases)
 
@@ -690,21 +706,26 @@ class CFVAEModel(TorchModel):
                     y_outputs_cf = self.final_classifier(cf_dict['z'], cf_dict['group_cf'])
 
                     batch_loss_dict['classification_cf'] = self.criterion_classification(y_outputs_cf, cf_dict['y_cf'])
-                    batch_loss_dict['clp'] = ((y_outputs_factual[cf_dict['y_mask'], :] - y_outputs_cf[cf_dict['y_mask'], :]) ** 2).sum()
+                    batch_loss_dict['clp'] = self.clp_loss(y_outputs_factual[cf_dict['y_mask'], :], 
+                        y_outputs_cf[cf_dict['y_mask'], :], reduction = 'sum')
+                    batch_loss_dict['clp_entropy'] = self.clp_entropy_loss(y_outputs_factual[cf_dict['y_mask'], :], 
+                        y_outputs_cf[cf_dict['y_mask'], :], reduction = 'sum')
 
                     output_dict = self.update_output_dict(output_dict, y_outputs, labels)
                     output_dict_cf = self.update_output_dict(output_dict_cf, y_outputs_cf, cf_dict['y_cf'])
 
                     batch_loss_dict['loss'] = batch_loss_dict['classification'] + \
                                                 self.config_dict['lambda_final_classifier_cf'] * batch_loss_dict['classification_cf'] + \
-                                                (self.config_dict['lambda_clp'] * batch_loss_dict['clp'] / num_mask)
+                                                (self.config_dict['lambda_clp'] * batch_loss_dict['clp'] / num_mask_batch) + \
+                                                (self.config_dict['lambda_clp_entropy'] * batch_loss_dict['clp_entropy'] / num_mask_batch)
                     
                     for key in batch_loss_dict.keys():
                         running_loss_dict[key] += batch_loss_dict[key].item()
 
                 # Compute Losses
-                scaling_dict = {key : i if key is not 'clp' else int(num_mask.cpu()) for key in running_loss_dict.keys()}
-                epoch_loss_dict = {key: running_loss_dict[key] / i for key in running_loss_dict.keys()}
+                scaling_dict = {key : i if key not in ['clp', 'clp_entropy'] else int(num_mask.cpu()) for key in running_loss_dict.keys()}
+                # epoch_loss_dict = {key: running_loss_dict[key] / i for key in running_loss_dict.keys()}
+                epoch_loss_dict = {key: running_loss_dict[key] / scaling_dict[key] for key in running_loss_dict.keys()}
                 # Update the loss dict
                 loss_dict[phase] = self.update_metric_dict(loss_dict[phase], epoch_loss_dict)
                 
