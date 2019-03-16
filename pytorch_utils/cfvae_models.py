@@ -518,29 +518,68 @@ class CFVAEModel(TorchModel):
     #     result_dict = {phase: {**performance_dict[phase], **loss_dict[phase]} for phase in performance_dict.keys()}
     #     return result_dict
 
-    def compute_cf(self, z, labels, group):
+    def init_output_dict_sampling(self):
+        """
+        Initialize the output dict
+        """
+        long_keys = ['y', 'y_cf', 'group', 'group_cf']
+        float_keys = ['pred_prob_factual', 'pred_prob_cf', 'output_factual', 'output_cf']
+
+        result = {key: torch.LongTensor() for key in long_keys}
+        result.update({key: torch.FloatTensor() for key in float_keys})
+        return result
+
+    def update_output_dict_sampling(self, output_dict_sampling, sampling_dict, outputs_factual, outputs_cf):
+        for key in sampling_dict.keys():
+            if key in output_dict_sampling.keys():
+                output_dict_sampling[key] = torch.cat((output_dict_sampling[key], sampling_dict[key].detach().cpu()), dim = 0)
+
+        pred_prob_factual = F.softmax(outputs_factual, 1)
+        pred_prob_cf = F.softmax(outputs_cf, 1)
+
+        output_dict_sampling['pred_prob_factual'] = torch.cat((output_dict_sampling['pred_prob_factual'], pred_prob_factual[:, 1].detach().cpu()))
+        output_dict_sampling['pred_prob_cf'] = torch.cat((output_dict_sampling['pred_prob_cf'], pred_prob_cf[:, 1].detach().cpu()))
+        output_dict_sampling['output_factual'] = torch.cat((output_dict_sampling['output_factual'], outputs_factual[:, 1].detach().cpu()))
+        output_dict_sampling['output_cf'] = torch.cat((output_dict_sampling['output_cf'], outputs_cf[:, 1].detach().cpu()))
+
+        return output_dict_sampling
+
+    def compute_sampling_dict(self, z, labels, group, num_samples = 1):
         """
         Generate some counterfactual samples for each group
         """
-        cf_dict = {key: [] for key in ['y', 'y_cf', 'z', 'group', 'group_cf', 'y_mask']}
+        sampling_dict = {key: [] for key in ['y', 'y_cf', 'z', 'group', 'group_cf', 'y_mask']}
 
-        for the_group in range(self.config_dict['num_groups']):
-            temp_dict = {}
-            temp_dict['y'] = labels
-            temp_dict['z'] = z
-            temp_dict['group'] = group
-            temp_dict['group_cf'] = the_group * torch.ones_like(group)
-            
-            # Sample some y's for group_cf
-            temp_dict['y_cf'] = self.sample_labels(self.model.classifier(temp_dict['z'], temp_dict['group_cf']))
-            temp_dict['y_mask'] = temp_dict['y'] == temp_dict['y_cf'] # elements with the same label of y
-            group_mask = temp_dict['group'] != temp_dict['group_cf'] # elements that are counterfactua
+        for i in range(num_samples):
+            for group_cf in range(self.config_dict['num_groups']):
+                temp_dict = {}
+                temp_dict['y'] = labels
+                temp_dict['z'] = z
+                temp_dict['group'] = group
+                temp_dict['group_cf'] = group_cf * torch.ones_like(group)
+                
+                # Sample some y's for group_cf
+                temp_dict['y_cf'] = self.sample_labels(self.model.classifier(temp_dict['z'], temp_dict['group_cf']))
+                temp_dict['y_mask'] = temp_dict['y'] == temp_dict['y_cf'] # elements with the same label of y
+                group_mask = temp_dict['group'] != temp_dict['group_cf'] # elements that are counterfactua
 
-            # Accumulate relevant elements over the loop
-            for key in cf_dict.keys():
-                cf_dict[key].append(temp_dict[key][group_mask])
+                # Accumulate relevant elements over the loop
+                for key in sampling_dict.keys():
+                    sampling_dict[key].append(temp_dict[key][group_mask])
 
-        return {key: torch.cat(value, dim = 0) for key, value in cf_dict.items()}
+        return {key: torch.cat(value, dim = 0) for key, value in sampling_dict.items()}
+
+    # def compile_sampling_dict(self, sampling_dict_dict, exclude = ['z']):
+    #     the_keys = sampling_dict_dict[list(sampling_dict_dict.keys())[0]][0].keys()
+    #     the_keys = [key for key in the_keys if key not in exclude]
+    #     sampling_dict = {phase: {key: [sampling_dict_dict[phase][0][key].cpu()] for key in the_keys} for phase in sampling_dict_dict.keys()}
+    #     for phase in sampling_dict_dict.keys():
+    #         for i, the_dict in enumerate(sampling_dict_dict[phase]):
+    #             if i > 0:
+    #                 for key in the_keys:
+    #                     sampling_dict[phase][key].append(the_dict[key].cpu())
+    #     sampling_dict = {phase: {key: torch.cat(sampling_dict[phase][key], dim = 0).numpy() for key in sampling_dict[phase].keys()} for phase in sampling_dict.keys()}
+    #     return sampling_dict
 
     def clp_loss(self, outputs_factual, outputs_cf, reduction = 'sum'):
         result = (outputs_factual - outputs_cf) ** 2
@@ -549,7 +588,7 @@ class CFVAEModel(TorchModel):
         elif reduction == 'mean':
             return result.mean()
         else:
-            raise ValueError('Please specify either sum or mean to clp_loss')
+            return result
 
     def clp_entropy_loss(self, outputs_factual, outputs_cf, reduction = 'sum'):
         return F.binary_cross_entropy_with_logits(outputs_factual, F.softmax(outputs_cf, dim = 1), reduction = reduction)
@@ -575,7 +614,9 @@ class CFVAEModel(TorchModel):
                 self.final_classifier.train(phase == 'train')
                 running_loss_dict = {key : 0.0 for key in loss_dict[phase].keys()}
                 output_dict = self.init_output_dict()
+                output_dict_factual = self.init_output_dict()
                 output_dict_cf = self.init_output_dict()
+                output_dict_sampling = self.init_output_dict_sampling()
                 i = 0
                 num_mask = 0
                 for the_data in loaders[phase]:
@@ -595,26 +636,29 @@ class CFVAEModel(TorchModel):
                     y_outputs = self.final_classifier(z, group)
                     batch_loss_dict['classification'] = self.criterion_classification(y_outputs, labels)
 
-                    cf_dict = self.compute_cf(z, labels, group)
+                    sampling_dict = self.compute_sampling_dict(z, labels, group)
                     
                     # Get the number of samples that were masked
-                    num_mask_batch = cf_dict['y_mask'].sum().detach()
+                    num_mask_batch = sampling_dict['y_mask'].sum().detach()
                     num_mask += num_mask_batch
-                    # print(num_mask_batch)
 
-                    y_outputs_factual = self.final_classifier(cf_dict['z'], cf_dict['group']) # the factual y corresponding to the cf y's
-                    y_outputs_cf = self.final_classifier(cf_dict['z'], cf_dict['group_cf'])
-
-                    batch_loss_dict['classification_cf'] = self.criterion_classification(y_outputs_cf, cf_dict['y_cf'])
-                    batch_loss_dict['clp'] = self.clp_loss(y_outputs_factual[cf_dict['y_mask'], :], 
-                        y_outputs_cf[cf_dict['y_mask'], :], reduction = 'sum')
-                    batch_loss_dict['clp_entropy'] = self.clp_entropy_loss(y_outputs_factual[cf_dict['y_mask'], :], 
-                        y_outputs_cf[cf_dict['y_mask'], :], reduction = 'sum')
+                    y_outputs_factual = self.final_classifier(sampling_dict['z'], sampling_dict['group']) # the factual y corresponding to the cf y's
+                    y_outputs_cf = self.final_classifier(sampling_dict['z'], sampling_dict['group_cf'])
 
                     output_dict = self.update_output_dict(output_dict, y_outputs, labels)
-                    output_dict_cf = self.update_output_dict(output_dict_cf, y_outputs_cf, cf_dict['y_cf'])
+                    output_dict_factual = self.update_output_dict(output_dict_factual, y_outputs_factual, sampling_dict['y'])
+                    output_dict_cf = self.update_output_dict(output_dict_cf, y_outputs_cf, sampling_dict['y_cf'])
+                    output_dict_sampling = self.update_output_dict_sampling(output_dict_sampling, sampling_dict, y_outputs_factual, y_outputs_cf)
 
-                    # print(phase, num_mask_batch, len(cf_dict['y_mask']))
+                    batch_loss_dict['classification_cf'] = self.criterion_classification(y_outputs_cf, sampling_dict['y_cf'])
+                    batch_loss_dict['clp'] = self.clp_loss(y_outputs_factual[sampling_dict['y_mask'], :], 
+                        y_outputs_cf[sampling_dict['y_mask'], :], reduction = 'sum')
+                    batch_loss_dict['clp_entropy'] = self.clp_entropy_loss(y_outputs_factual[sampling_dict['y_mask'], :], 
+                        y_outputs_cf[sampling_dict['y_mask'], :], reduction = 'sum')
+
+                    output_dict = self.update_output_dict(output_dict, y_outputs, labels)
+                    output_dict_cf = self.update_output_dict(output_dict_cf, y_outputs_cf, sampling_dict['y_cf'])
+
                     batch_loss_dict['loss'] = batch_loss_dict['classification'] + \
                                                 self.config_dict['lambda_final_classifier_cf'] * batch_loss_dict['classification_cf'] + \
                                                 (self.config_dict['lambda_clp'] * batch_loss_dict['clp'] / num_mask_batch) + \
@@ -637,17 +681,10 @@ class CFVAEModel(TorchModel):
                 epoch_statistics = self.compute_epoch_statistics(output_dict)
                 performance_dict[phase] = self.update_metric_dict(performance_dict[phase], epoch_statistics)
 
-                # Update the performance dict - on counterfactual data
-                epoch_statistics_cf = self.compute_epoch_statistics(output_dict_cf)
-                performance_dict_cf[phase] = self.update_metric_dict(performance_dict_cf[phase], epoch_statistics_cf)
-                
                 print('Phase: {}:'.format(phase))
                 
                 self.print_metric_dict(epoch_loss_dict)
-                print('Factual')
                 self.print_metric_dict(epoch_statistics)
-                print('Counterfactual')
-                self.print_metric_dict(epoch_statistics_cf)
 
                 if (phase == 'val') & (epoch_loss_dict['loss'] < best_performance):
                     print('Best model updated')
@@ -661,7 +698,7 @@ class CFVAEModel(TorchModel):
         result_dict = {phase: {**performance_dict[phase], **loss_dict[phase]} for phase in performance_dict.keys()}
         return result_dict
 
-    def predict_final_classifier(self, data_dict, label_dict, group_dict, phases = ['test']):
+    def predict_final_classifier_CLP(self, data_dict, label_dict, group_dict, phases = ['test']):
         """
         Train the final classifier
         """
@@ -675,10 +712,13 @@ class CFVAEModel(TorchModel):
 
         with torch.no_grad():
             output_dict_dict = {}
+            output_dict_dict_sampling = {}
             for phase in phases:
                 running_loss_dict = {key : 0.0 for key in loss_dict[phase].keys()}
                 output_dict = self.init_output_dict()
+                output_dict_factual = self.init_output_dict()
                 output_dict_cf = self.init_output_dict()
+                output_dict_sampling = self.init_output_dict_sampling()
                 i = 0
                 num_mask = 0
                 for the_data in loaders[phase]:
@@ -694,25 +734,27 @@ class CFVAEModel(TorchModel):
 
                     # Compute the factual loss
                     y_outputs = self.final_classifier(z, group)
-                    batch_loss_dict['classification'] = self.criterion_classification(y_outputs, labels)
 
-                    cf_dict = self.compute_cf(z, labels, group)
+                    sampling_dict = self.compute_sampling_dict(z, labels, group)
 
                     # Get the number of samples that were masked
-                    num_mask_batch = cf_dict['y_mask'].sum().detach()
+                    num_mask_batch = sampling_dict['y_mask'].sum().detach()
                     num_mask += num_mask_batch
 
-                    y_outputs_factual = self.final_classifier(cf_dict['z'], cf_dict['group']) # the factual y corresponding to the cf y's
-                    y_outputs_cf = self.final_classifier(cf_dict['z'], cf_dict['group_cf'])
-
-                    batch_loss_dict['classification_cf'] = self.criterion_classification(y_outputs_cf, cf_dict['y_cf'])
-                    batch_loss_dict['clp'] = self.clp_loss(y_outputs_factual[cf_dict['y_mask'], :], 
-                        y_outputs_cf[cf_dict['y_mask'], :], reduction = 'sum')
-                    batch_loss_dict['clp_entropy'] = self.clp_entropy_loss(y_outputs_factual[cf_dict['y_mask'], :], 
-                        y_outputs_cf[cf_dict['y_mask'], :], reduction = 'sum')
+                    y_outputs_factual = self.final_classifier(sampling_dict['z'], sampling_dict['group']) # the factual y corresponding to the cf y's
+                    y_outputs_cf = self.final_classifier(sampling_dict['z'], sampling_dict['group_cf'])
 
                     output_dict = self.update_output_dict(output_dict, y_outputs, labels)
-                    output_dict_cf = self.update_output_dict(output_dict_cf, y_outputs_cf, cf_dict['y_cf'])
+                    output_dict_factual = self.update_output_dict(output_dict_factual, y_outputs_factual, sampling_dict['y'])
+                    output_dict_cf = self.update_output_dict(output_dict_cf, y_outputs_cf, sampling_dict['y_cf'])
+                    output_dict_sampling = self.update_output_dict_sampling(output_dict_sampling, sampling_dict, y_outputs_factual, y_outputs_cf)
+
+                    batch_loss_dict['classification'] = self.criterion_classification(y_outputs, labels)
+                    batch_loss_dict['classification_cf'] = self.criterion_classification(y_outputs_cf, sampling_dict['y_cf'])
+                    batch_loss_dict['clp'] = self.clp_loss(y_outputs_factual[sampling_dict['y_mask'], :], 
+                        y_outputs_cf[sampling_dict['y_mask'], :], reduction = 'sum')
+                    batch_loss_dict['clp_entropy'] = self.clp_entropy_loss(y_outputs_factual[sampling_dict['y_mask'], :], 
+                        y_outputs_cf[sampling_dict['y_mask'], :], reduction = 'sum')
 
                     batch_loss_dict['loss'] = batch_loss_dict['classification'] + \
                                                 self.config_dict['lambda_final_classifier_cf'] * batch_loss_dict['classification_cf'] + \
@@ -737,6 +779,69 @@ class CFVAEModel(TorchModel):
                 epoch_statistics_cf = self.compute_epoch_statistics(output_dict_cf)
                 performance_dict_cf[phase] = self.update_metric_dict(performance_dict_cf[phase], epoch_statistics_cf)
                 
+                ## Finalize the output_dict
+                output_dict = self.finalize_output_dict(output_dict)
+                output_dict_dict[phase] = output_dict
+                output_dict_sampling = self.finalize_output_dict(output_dict_sampling)
+                output_dict_dict_sampling[phase] = output_dict_sampling
+        result_dict = {phase: {**performance_dict[phase], **loss_dict[phase]} for phase in performance_dict.keys()}
+        return output_dict_dict, result_dict, output_dict_dict_sampling
+
+    def predict_final_classifier(self, data_dict, label_dict, group_dict, phases = ['test']):
+        """
+        Train the final classifier
+        """
+        best_performance = 1e18
+
+        loaders = self.init_loaders(data_dict, label_dict, group_dict)
+        group_binarizer = self.init_binarizer(group_dict)
+        loss_dict = self.init_loss_dict(metrics = ['loss', 'classification'], phases = phases)
+        performance_dict = self.init_performance_dict(phases = phases)
+        performance_dict_cf = self.init_performance_dict(phases = phases)
+
+        with torch.no_grad():
+            output_dict_dict = {}
+            # sampling_dict_dict = {phase: [] for phase in phases}
+            for phase in phases:
+                running_loss_dict = {key : 0.0 for key in loss_dict[phase].keys()}
+                output_dict = self.init_output_dict()
+                # output_dict_cf = self.init_output_dict()
+                i = 0
+                num_mask = 0
+                for the_data in loaders[phase]:
+                    batch_loss_dict = {}
+                    i += 1
+                    inputs, labels, group = self.transform_batch(the_data)
+                    
+                    combined_inputs = scipy.sparse.hstack((inputs, 
+                        group_binarizer.transform(group.cpu().numpy())), format = 'csr')
+
+                    # forward
+                    z, _, _ = self.model.encoder(combined_inputs)
+
+                    # Compute the factual loss
+                    y_outputs = self.final_classifier(z, group)
+                    batch_loss_dict['classification'] = self.criterion_classification(y_outputs, labels)
+
+                    sampling_dict = self.compute_sampling_dict(z, labels, group)
+                    output_dict = self.update_output_dict(output_dict, y_outputs, labels)
+                    # output_dict_cf = self.update_output_dict(output_dict_cf, y_outputs_cf, sampling_dict['y_cf'])
+
+                    batch_loss_dict['loss'] = batch_loss_dict['classification']
+                    for key in batch_loss_dict.keys():
+                        running_loss_dict[key] += batch_loss_dict[key].item()
+
+                # Compute Losses
+                scaling_dict = {key : i if key not in ['clp', 'clp_entropy'] else int(num_mask.cpu()) for key in running_loss_dict.keys()}
+                # epoch_loss_dict = {key: running_loss_dict[key] / i for key in running_loss_dict.keys()}
+                epoch_loss_dict = {key: running_loss_dict[key] / scaling_dict[key] for key in running_loss_dict.keys()}
+                # Update the loss dict
+                loss_dict[phase] = self.update_metric_dict(loss_dict[phase], epoch_loss_dict)
+                
+                # Update the performance dict - on factual data
+                epoch_statistics = self.compute_epoch_statistics(output_dict)
+                performance_dict[phase] = self.update_metric_dict(performance_dict[phase], epoch_statistics)
+
                 ## Finalize the output_dict
                 output_dict = self.finalize_output_dict(output_dict)
                 output_dict_dict[phase] = output_dict
