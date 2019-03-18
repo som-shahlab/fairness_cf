@@ -23,17 +23,20 @@ if __name__ == '__main__':
                       type = str,
                       default = 'age')
     parser.add_argument('--config_path_vae',
-    type=str,
-    default='')
+                        type=str,
+                        default='')
+    parser.add_argument('--config_path_final_classifier',
+                        type=str,
+                        default='')
     parser.add_argument('--checkpoints_path_vae',
-    type=str,
-    default='')
+                        type=str,
+                        default='')
     parser.add_argument('--experiment_name',
-    type=str,
-    default='scratch')
+                        type=str,
+                        default='scratch')
     parser.add_argument('--trial_id',
-    type=str,
-    default='0')
+                        type=str,
+                        default='0')
     parser.add_argument('--save_checkpoints', dest='save_checkpoints', action='store_true')
     parser.add_argument('--no_checkpoints', dest='save_checkpoints', action='store_false')
     parser.set_defaults(save_checkpoints=True)
@@ -47,6 +50,11 @@ if __name__ == '__main__':
         config_path_vae = os.path.join(args.project_dir, 'config', 'defaults', 'cfvae', args.outcome, args.sensitive_variable, 'model_config.yaml')
     else:
         config_path_vae = os.path.join(args.project_dir, args.config_path_vae)
+
+    if args.config_path_final_classifier == '':
+        config_path_final_classifier = os.path.join(args.project_dir, 'config', 'grid', 'final_classifier', args.outcome, args.sensitive_variable, 'model_config.yaml')
+    else:
+        config_path_final_classifier = os.path.join(args.project_dir, args.config_path_final_classifier)
 
     if args.checkpoints_path_vae == '':
         checkpoints_path_vae = os.path.join(args.project_dir, 'checkpoints', 'cfvae_default', args.outcome, args.sensitive_variable, str(0))
@@ -70,23 +78,17 @@ if __name__ == '__main__':
 
     with open(config_path_vae, 'r') as fp:
         config_dict_vae = yaml.load(fp)
+
+    with open(config_path_final_classifier, 'r') as fp:
+        config_dict_final_classifier = yaml.load(fp)
       
     print(config_dict_vae)
+    print(config_dict_final_classifier)
 
     if args.sensitive_variable == 'gender':
         data_dict = {k: v[group_dict[k] < 2] for k,v in data_dict.items()}
         label_dict = {k: v[group_dict[k] < 2] for k,v in label_dict.items()}
         group_dict = {k: v[group_dict[k] < 2] for k,v in group_dict.items()}
-
-    config_dict_final_classifier = {
-        'lr_final_classifier' : 1e-3,
-        'lambda_final_classifier_cf' : 0e0,
-        'lambda_clp' : 5e0,
-        'lambda_clp_entropy' : 0e0,
-        'num_epochs' : 10,
-        'weighted' : True,
-        'num_samples_eval': 1
-    }
 
     config_dict_vae.update(config_dict_final_classifier)
     model = CFVAEModel(config_dict_vae)
@@ -101,8 +103,12 @@ if __name__ == '__main__':
     cf_df = pd.concat({key: pd.DataFrame(cf_dict[key]) for key in cf_dict.keys()}).rename_axis(index = ['phase', 'id']).reset_index(0)
     cf_df = cf_df.assign(pred_diff = lambda x: x.pred_prob_cf - x.pred_prob_factual)
 
+    ## Save weights
+    if args.save_checkpoints:
+        model.save_weights(os.path.join(checkpoints_path, '{}.chk'.format(time_str)))
+
     ## Get performance by group
-    sensitive_variables = ['age', 'gender', 'race_eth']
+    sensitive_variables = [args.sensitive_variable]
     data_dict_by_group = {sensitive_variable: {} for sensitive_variable in sensitive_variables}
     label_dict_by_group = {sensitive_variable: {} for sensitive_variable in sensitive_variables}
     group_dict_by_group = {sensitive_variable: {} for sensitive_variable in sensitive_variables}
@@ -110,17 +116,17 @@ if __name__ == '__main__':
         groups = np.unique(master_label_dict['train'][sensitive_variable])
         for group in groups:
             data_dict_by_group[sensitive_variable][group] = {split: 
-                                         data_dict[split][master_label_dict[split][sensitive_variable] == group]
-                                         for split in data_dict.keys()
-                                        }
+                                     data_dict[split][group_dict[split] == group]
+                                     for split in data_dict.keys()
+                                    }
             label_dict_by_group[sensitive_variable][group] = {split: 
-                                         label_dict[split][master_label_dict[split][sensitive_variable] == group]
-                                         for split in data_dict.keys()
-                                        }
+                                     label_dict[split][group_dict[split] == group]
+                                     for split in data_dict.keys()
+                                    }
             group_dict_by_group[sensitive_variable][group] = {split: 
-                                         group_dict[split][master_label_dict[split][sensitive_variable] == group]
-                                         for split in data_dict.keys()
-                                        }
+                                     group_dict[split][group_dict[split] == group]
+                                     for split in data_dict.keys()
+                                    }
 
     result_df_by_group = pd.concat({sensitive_variable: 
                               pd.concat({
