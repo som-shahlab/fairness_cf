@@ -549,16 +549,15 @@ class CFVAEModel(TorchModel):
 
                     y_outputs_factual = self.final_classifier(sampling_dict['z'], sampling_dict['group']) # the factual y corresponding to the cf y's
                     y_outputs_cf = self.final_classifier(sampling_dict['z'], sampling_dict['group_cf'])
-                    y_outputs_cf = y_outputs_cf if self.config_dict['cf_gradients'] else y_outputs_cf.detach()
-
-                    output_dict = self.update_output_dict(output_dict, y_outputs, labels)
-                    output_dict_factual = self.update_output_dict(output_dict_factual, y_outputs_factual, sampling_dict['y'])
-                    output_dict_cf = self.update_output_dict(output_dict_cf, y_outputs_cf, sampling_dict['y_cf'])
-                    output_dict_sampling = self.update_output_dict_sampling(output_dict_sampling, sampling_dict, y_outputs_factual, y_outputs_cf)
 
                     batch_loss_dict['classification_cf'] = self.criterion_classification(y_outputs_cf, sampling_dict['y_cf'])
 
+                    ## Compute the CLP loss
+                    # Get the weights
                     weights = sampling_dict['prob_y_cf'][sampling_dict['y_mask']] if self.config_dict['weighted'] else None
+                    # Propagate CLP gradients to the cf samples?
+                    y_outputs_cf = y_outputs_cf if self.config_dict['cf_gradients'] else y_outputs_cf.detach()
+
                     batch_loss_dict['clp'] = self.clp_loss(
                             outputs_factual = y_outputs_factual[sampling_dict['y_mask'], :], 
                             outputs_cf = y_outputs_cf[sampling_dict['y_mask'], :], 
@@ -574,7 +573,13 @@ class CFVAEModel(TorchModel):
                                                 self.config_dict['lambda_final_classifier_cf'] * batch_loss_dict['classification_cf'] + \
                                                 (self.config_dict['lambda_clp'] * batch_loss_dict['clp'] / num_mask_batch) + \
                                                 (self.config_dict['lambda_clp_entropy'] * batch_loss_dict['clp_entropy'] / num_mask_batch)
-                    
+
+                    # Update output_dicts
+                    output_dict = self.update_output_dict(output_dict, y_outputs, labels)
+                    output_dict_factual = self.update_output_dict(output_dict_factual, y_outputs_factual, sampling_dict['y'])
+                    output_dict_cf = self.update_output_dict(output_dict_cf, y_outputs_cf, sampling_dict['y_cf'])
+                    output_dict_sampling = self.update_output_dict_sampling(output_dict_sampling, sampling_dict, y_outputs_factual, y_outputs_cf)
+
                     if phase == 'train':
                         batch_loss_dict['loss'].backward()
                         self.final_classifier_optimizer.step()
