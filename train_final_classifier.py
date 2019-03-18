@@ -49,7 +49,7 @@ if __name__ == '__main__':
         config_path_vae = os.path.join(args.project_dir, args.config_path_vae)
 
     if args.checkpoints_path_vae == '':
-        checkpoints_path_vae = os.path.join(args.project_dir, 'checkpoints', 'cfvae_default', args.outcome, args.sensitive_variable, str(args.trial_id))
+        checkpoints_path_vae = os.path.join(args.project_dir, 'checkpoints', 'cfvae_default', args.outcome, args.sensitive_variable, str(0))
     else:
         checkpoints_path_vae = os.path.join(args.project_dir, args.checkpoints_path_vae)
 
